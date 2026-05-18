@@ -230,6 +230,7 @@ function EnterpriseApp({ auth, onLogout }) {
     Object.fromEntries(teammates.map((item) => [item.id, { active: item.id !== 'zhiping', ownerName: item.name }]))
   );
   const recognitionRef = useRef(null);
+  const voiceActiveRef = useRef(false);
 
   const isJamie = auth.user.role === 'super_admin';
   const visibleTeammates = isJamie ? teammates : teammates.filter((item) => item.id === auth.user.id);
@@ -354,10 +355,11 @@ function EnterpriseApp({ auth, onLogout }) {
     });
   };
 
-  const startVoice = () => {
-    if (!SpeechRecognition || listening || !access.active) return;
+  const launchRecognition = () => {
+    if (!SpeechRecognition || !access.active || !voiceActiveRef.current) return;
     const recognition = new SpeechRecognition();
     recognition.lang = 'zh-CN';
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onstart = () => setListening(true);
     recognition.onresult = (event) => {
@@ -366,10 +368,32 @@ function EnterpriseApp({ auth, onLogout }) {
         .join('');
       setDraft(text);
     };
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+    recognition.onend = () => {
+      if (!voiceActiveRef.current) {
+        setListening(false);
+        return;
+      }
+      setTimeout(() => {
+        if (voiceActiveRef.current) launchRecognition();
+      }, 250);
+    };
+    recognition.onerror = () => {
+      if (!voiceActiveRef.current) setListening(false);
+    };
     recognitionRef.current = recognition;
     recognition.start();
+  };
+
+  const startVoice = () => {
+    if (!SpeechRecognition || !access.active) return;
+    if (voiceActiveRef.current) {
+      voiceActiveRef.current = false;
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    voiceActiveRef.current = true;
+    launchRecognition();
   };
 
   const saveOpportunity = (id) => {
@@ -628,6 +652,24 @@ function CoworkerWorkspace({
             </div>
           ))}
         </div>
+        <div className="voice-composer">
+          <button className={`mic-button ${listening ? 'recording' : ''}`} onClick={startVoice} disabled={!access.active}>
+            <Mic size={22} />
+            {listening ? '停止语音' : '开始语音'}
+          </button>
+          <input
+            value={draft}
+            disabled={!access.active}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') sendMessage();
+            }}
+            placeholder="说出现场信息、客户问题或报价想法..."
+          />
+          <button className="send-button" onClick={sendMessage} disabled={!access.active}>
+            <Send size={18} />
+          </button>
+        </div>
         <div className="saved-dock">
           <strong>雷达商机传送门</strong>
           {savedCards.length ? (
@@ -665,24 +707,6 @@ function CoworkerWorkspace({
           ) : (
             <p>内部信息 Agent 或 Jamie 发来的计划、商机会出现在这里。</p>
           )}
-        </div>
-        <div className="voice-composer">
-          <button className={`mic-button ${listening ? 'recording' : ''}`} onClick={startVoice} disabled={!access.active}>
-            <Mic size={22} />
-            语音输入
-          </button>
-          <input
-            value={draft}
-            disabled={!access.active}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') sendMessage();
-            }}
-            placeholder="说出现场信息、客户问题或报价想法..."
-          />
-          <button className="send-button" onClick={sendMessage} disabled={!access.active}>
-            <Send size={18} />
-          </button>
         </div>
       </section>
 
