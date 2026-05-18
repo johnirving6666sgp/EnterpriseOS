@@ -195,6 +195,9 @@ function EnterpriseApp({ auth, onLogout }) {
   const [listening, setListening] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
   const [broadcasted, setBroadcasted] = useState([]);
+  const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [] });
+  const [generatedOpportunities, setGeneratedOpportunities] = useState([]);
+  const [systemRunning, setSystemRunning] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
       id: 'bc-plan-larry-gu',
@@ -243,7 +246,9 @@ function EnterpriseApp({ auth, onLogout }) {
   const messages = messagesByUser[workspaceId] ?? [];
   const isThinking = thinkingByUser[workspaceId] === true;
   const usage = usageByUser[workspaceId] ?? { calls: 0, input: 0, output: 0, cost: 0 };
-  const savedCards = opportunitySeed.filter((item) => (savedByUser[workspaceId] ?? []).includes(item.id));
+  const allOpportunities = [...generatedOpportunities, ...opportunitySeed];
+  const allInsightCards = [...(systemOutputs.internal ?? []), ...insightCards];
+  const savedCards = allOpportunities.filter((item) => (savedByUser[workspaceId] ?? []).includes(item.id));
   const inboxBroadcasts = broadcasts.filter((item) => item.recipients.includes(workspaceId));
   const totalUsage = Object.values(usageByUser).reduce(
     (sum, item) => ({
@@ -284,6 +289,8 @@ function EnterpriseApp({ auth, onLogout }) {
         const agentEntries = Object.entries(state.agents ?? {});
 
         setMessagesByUser({ ...baseMessages, ...(state.conversations ?? {}) });
+        setSystemOutputs({ internal: [], external: [], ...(state.systemAgentOutputs ?? {}) });
+        setGeneratedOpportunities(state.generatedOpportunities ?? []);
         setSavedByUser(state.savedOpportunities ?? {});
         setBroadcasts(state.broadcasts ?? []);
         setUsageByUser((current) => ({ ...current, ...(state.usage ?? {}) }));
@@ -524,6 +531,26 @@ function EnterpriseApp({ auth, onLogout }) {
     setBroadcasted((current) => (current.includes(card.id) ? current : [...current, card.id]));
   };
 
+  const runSystemAgent = (id) => {
+    if (!isJamie || systemRunning[id]) return;
+    setSystemRunning((current) => ({ ...current, [id]: true }));
+    apiFetch(`/api/system-agents/${id}/run`, { method: 'POST' })
+      .then((response) => {
+        if (!response.ok) throw new Error('system_agent_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (id === 'external' && payload.output?.opportunity) {
+          setGeneratedOpportunities((current) => [payload.output.opportunity, ...current]);
+        }
+        setSystemOutputs((current) => ({
+          ...current,
+          [id]: [payload.output, ...(current[id] ?? [])].slice(0, 12)
+        }));
+      })
+      .finally(() => setSystemRunning((current) => ({ ...current, [id]: false })));
+  };
+
   const submitFeedback = (broadcastId, status) => {
     setBroadcasts((current) =>
       current.map((item) =>
@@ -592,15 +619,20 @@ function EnterpriseApp({ auth, onLogout }) {
           sendInsightBroadcast={sendInsightBroadcast}
           totalUsage={totalUsage}
           messagesByUser={messagesByUser}
+          insightCards={allInsightCards}
+          runSystemAgent={runSystemAgent}
+          running={systemRunning.internal}
         />
       )}
 
       {visiblePage === 'opportunity' && (
         <OpportunityBoard
-          opportunities={opportunitySeed}
+          opportunities={allOpportunities}
           savedIds={savedByUser[workspaceId] ?? []}
           saveOpportunity={saveOpportunity}
           workspaceName={access.ownerName}
+          runExternalAgent={() => runSystemAgent('external')}
+          running={systemRunning.external}
         />
       )}
 
@@ -846,7 +878,7 @@ function AuthScreen({ onAuth }) {
   );
 }
 
-function InsightAgent({ broadcasted, broadcasts, createBroadcast, messagesByUser, sendInsightBroadcast, totalUsage }) {
+function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, messagesByUser, runSystemAgent, running, sendInsightBroadcast, totalUsage }) {
   const eventCount = Object.values(messagesByUser).flat().length;
   const [draft, setDraft] = useState({
     type: '工作计划',
@@ -876,7 +908,10 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, messagesByUser
             <h2>内部信息流动仓</h2>
             <p>隐秘读取原始聊天，抹去具体字句，沉淀专家资产和跨团队盲点。</p>
           </div>
-          <Sparkles size={23} />
+          <button className="agent-run-button" onClick={() => runSystemAgent('internal')} disabled={running}>
+            <Sparkles size={18} />
+            {running ? '内部 Agent 思考中...' : '运行内部信息 Agent'}
+          </button>
         </div>
         <div className="insight-wall">
           {insightCards.map((card) => {
@@ -977,13 +1012,17 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, messagesByUser
   );
 }
 
-function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName }) {
+function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running }) {
   return (
     <section className="opportunity-page">
       <div className="radar-hero">
         <p className="eyebrow">External Opportunity Board</p>
         <h2>全网行业线索 ──► AI 匹配内部专家能力 ──► 收藏至我的助理</h2>
         <span>商业绿色雷达 · 当前收藏目标：{workspaceName} 的助理</span>
+        <button className="agent-run-button radar-run" onClick={runExternalAgent} disabled={running}>
+          <Newspaper size={18} />
+          {running ? '外部 Agent 搜索中...' : '运行外部机会 Agent'}
+        </button>
       </div>
       <div className="masonry-board">
         {opportunities.map((card) => {

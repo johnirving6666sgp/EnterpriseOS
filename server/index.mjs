@@ -52,6 +52,8 @@ const seed = {
     external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' }
   },
   conversations: {},
+  systemAgentOutputs: { internal: [], external: [] },
+  generatedOpportunities: [],
   savedOpportunities: { larry: ['aerospace-valve'] },
   broadcasts: [
     {
@@ -203,6 +205,8 @@ app.get('/api/state', requireAuth, async (req, res) => {
     users: [{ id: req.session.userId, name: req.session.name, role: req.session.role }],
     agents: { [req.session.userId]: ownAgent },
     conversations: { [req.session.userId]: store.conversations[req.session.userId] ?? [] },
+    systemAgentOutputs: store.systemAgentOutputs ?? { internal: [], external: [] },
+    generatedOpportunities: store.generatedOpportunities ?? [],
     savedOpportunities: { [req.session.userId]: store.savedOpportunities[req.session.userId] ?? [] },
     broadcasts: (store.broadcasts ?? []).filter((item) => item.recipients.includes(req.session.userId)),
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
@@ -267,6 +271,26 @@ app.post('/api/system-agents/:id/route', requireAuth, requireJamie, async (req, 
   recordAudit(store, req.session.userId, 'system-agent.route.updated', { id, provider, apiModel });
   await writeStore(store);
   res.json({ systemAgent: store.systemAgents[id] });
+});
+
+app.post('/api/system-agents/:id/run', requireAuth, requireJamie, async (req, res) => {
+  const { id } = req.params;
+  const store = await readStore();
+  const systemAgent = store.systemAgents[id];
+  if (!systemAgent) return res.status(404).json({ error: 'system_agent_not_found' });
+  const generated = await runSystemAgent({ id, store, systemAgent });
+  store.systemAgentOutputs ??= { internal: [], external: [] };
+  store.systemAgentOutputs[id] ??= [];
+  store.systemAgentOutputs[id].unshift(generated.output);
+  store.systemAgentOutputs[id] = store.systemAgentOutputs[id].slice(0, 12);
+  if (id === 'external' && generated.output.opportunity) {
+    store.generatedOpportunities ??= [];
+    store.generatedOpportunities.unshift(generated.output.opportunity);
+    store.generatedOpportunities = store.generatedOpportunities.slice(0, 18);
+  }
+  recordAudit(store, req.session.userId, 'system-agent.run', { id, llm: generated.llm });
+  await writeStore(store);
+  res.json({ output: generated.output, llm: generated.llm, systemAgent });
 });
 
 app.post('/api/agents/:id/suspend', requireAuth, requireJamie, async (req, res) => {
@@ -517,6 +541,123 @@ function fallbackAgentReply({ agent, user, message }) {
     return '建议先锁定高校/研究院材料实验室、航空航天材料团队、金属粉末与增材制造企业、特种合金小试线。先卖“材料试制/工艺验证”，再推进设备方案，这比直接卖设备更容易打开客户。';
   }
   return `收到。我会以 ${agent.name} 的身份先理解问题本身，再给 ${user.name} 输出可执行建议；如果信息不足，我会追问关键条件，而不是只做归档。`;
+}
+
+async function runSystemAgent({ id, store, systemAgent }) {
+  const model = toOpenRouterModel(systemAgent.apiModel);
+  const compactConversations = Object.entries(store.conversations ?? {})
+    .map(([ownerId, conversation]) => {
+      const latest = conversation
+        .slice(-8)
+        .map((item) => `${item.from}: ${item.text}`)
+        .join('\n');
+      return `## ${ownerId}\n${latest || '暂无对话'}`;
+    })
+    .join('\n\n');
+
+  if (!OPENROUTER_API_KEY) {
+    return {
+      output: fallbackSystemAgentOutput(id),
+      llm: { provider: 'fallback', simulated: true, reason: 'missing_openrouter_key' }
+    };
+  }
+
+  const spec =
+    id === 'internal'
+      ? [
+          '你是内部信息 Agent。你读取小团队试用中的原始对话，但输出必须去除具体隐私字句，只沉淀可复用的协作洞察和专家资产。',
+          '请只返回 JSON：{"title":"...","text":"...","source":"...","asset":"..."}。',
+          'title 要短，text 要能指导 Jamie 下一步如何改进团队协作、材料专家或设备专家能力。'
+        ].join('\n')
+      : [
+          '你是外部机会 Agent。你根据小团队方向生成一条值得跟进的商机线索。不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径。',
+          '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
+          '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"..."}。',
+          'title 要像商机卡片标题，action 要说明同事收藏后可以让个人助理怎么深入分析。'
+        ].join('\n');
+
+  try {
+    const result = await callOpenRouter({
+      model,
+      messages: [
+        { role: 'system', content: spec },
+        { role: 'user', content: `这是当前小团队最近对话摘要：\n\n${compactConversations || '暂无对话。'}` }
+      ],
+      temperature: 0.5,
+      maxTokens: 900
+    });
+    const data = parseJsonObject(result.reply);
+    return {
+      output: normalizeSystemAgentOutput(id, data, result.reply),
+      llm: { provider: 'openrouter', model: result.model, simulated: false }
+    };
+  } catch (error) {
+    return {
+      output: fallbackSystemAgentOutput(id, error.message),
+      llm: { provider: 'fallback', model, simulated: true, error: error.message }
+    };
+  }
+}
+
+function parseJsonObject(text) {
+  const clean = String(text).replace(/```json|```/g, '').trim();
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return {};
+  try {
+    return JSON.parse(clean.slice(start, end + 1));
+  } catch {
+    return {};
+  }
+}
+
+function normalizeSystemAgentOutput(id, data, raw) {
+  if (id === 'external') {
+    const opportunity = {
+      id: `external-${Date.now()}`,
+      title: data.title || '待验证：新型金属材料研发客户线索',
+      source: data.source || '外部机会 Agent / OpenRouter',
+      match: data.match || '材料与设备能力匹配 78%',
+      why: data.why || raw.slice(0, 240),
+      action: data.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。'
+    };
+    return { id: opportunity.id, at: new Date().toISOString(), title: opportunity.title, opportunity, raw };
+  }
+  return {
+    id: `internal-${Date.now()}`,
+    at: new Date().toISOString(),
+    title: data.title || '小团队试用洞察',
+    text: data.text || raw.slice(0, 320),
+    source: data.source || '内部信息 Agent / 最近团队对话',
+    asset: data.asset || '小团队试用洞察.md',
+    raw
+  };
+}
+
+function fallbackSystemAgentOutput(id, detail = '') {
+  if (id === 'external') {
+    return normalizeSystemAgentOutput(
+      'external',
+      {
+        title: '待验证：材料试制切入悬浮真空熔炼设备客户',
+        source: '外部机会 Agent / 本地降级',
+        match: '材料专家与设备专家能力匹配 80%',
+        why: `可先围绕高校材料实验室、航空航天材料团队、特种合金小试线寻找材料试制需求。${detail}`,
+        action: '收藏后让个人助理生成客户清单、验证问题和首轮沟通话术。'
+      },
+      detail
+    );
+  }
+  return normalizeSystemAgentOutput(
+    'internal',
+    {
+      title: '小团队试用洞察：先让 Agent 产出行动',
+      text: `当前试用重点应放在真实工作动作：客户跟进、材料试制判断、设备方案和广播反馈。${detail}`,
+      source: '内部信息 Agent / 本地降级',
+      asset: '小团队试用洞察.md'
+    },
+    detail
+  );
 }
 
 function redactPasswords(store) {
