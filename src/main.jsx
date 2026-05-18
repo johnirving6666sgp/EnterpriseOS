@@ -20,6 +20,7 @@ import {
 import './styles.css';
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
 
 const modelOptions = [
   {
@@ -161,8 +162,31 @@ const expertTracks = [
 ];
 
 function App() {
+  const [auth, setAuth] = useState(() => {
+    const raw = window.localStorage.getItem('enterprise-os-auth');
+    return raw ? JSON.parse(raw) : null;
+  });
+
+  const handleAuth = (payload) => {
+    window.localStorage.setItem('enterprise-os-auth', JSON.stringify(payload));
+    setAuth(payload);
+  };
+
+  const logout = () => {
+    window.localStorage.removeItem('enterprise-os-auth');
+    setAuth(null);
+  };
+
+  if (!auth) {
+    return <AuthScreen onAuth={handleAuth} />;
+  }
+
+  return <EnterpriseApp auth={auth} onLogout={logout} />;
+}
+
+function EnterpriseApp({ auth, onLogout }) {
   const [page, setPage] = useState('workspace');
-  const [workspaceId, setWorkspaceId] = useState('larry');
+  const [workspaceId, setWorkspaceId] = useState(auth.user.role === 'super_admin' ? 'larry' : auth.user.id);
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
@@ -205,6 +229,8 @@ function App() {
   );
   const recognitionRef = useRef(null);
 
+  const isJamie = auth.user.role === 'super_admin';
+  const visiblePage = isJamie ? page : page === 'commander' ? 'workspace' : page;
   const coworker = teammates.find((item) => item.id === workspaceId) ?? teammates[1];
   const access = accessByUser[workspaceId] ?? { active: true, ownerName: coworker.name };
   const model = getModel(modelByUser[workspaceId]);
@@ -381,22 +407,25 @@ function App() {
           <h1>从私密助理到组织记忆，再到外部商机雷达</h1>
         </div>
         <nav className="top-nav" aria-label="页面导航">
-          <button className={page === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
+          <button className={visiblePage === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
             同事桌面
           </button>
-          <button className={page === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
+          <button className={visiblePage === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
             内部信息仓
           </button>
-          <button className={page === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
+          <button className={visiblePage === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
             商机雷达
           </button>
-          <button className={page === 'commander' ? 'active' : ''} onClick={() => setPage('commander')}>
-            Jamie Central
-          </button>
+          {isJamie && (
+            <button className={visiblePage === 'commander' ? 'active' : ''} onClick={() => setPage('commander')}>
+              Jamie Central
+            </button>
+          )}
+          <button onClick={onLogout}>退出登录</button>
         </nav>
       </header>
 
-      {page === 'workspace' && (
+      {visiblePage === 'workspace' && (
         <CoworkerWorkspace
           access={access}
           coworker={coworker}
@@ -420,7 +449,7 @@ function App() {
         />
       )}
 
-      {page === 'insight' && (
+      {visiblePage === 'insight' && (
         <InsightAgent
           broadcasted={broadcasted}
           broadcasts={broadcasts}
@@ -431,7 +460,7 @@ function App() {
         />
       )}
 
-      {page === 'opportunity' && (
+      {visiblePage === 'opportunity' && (
         <OpportunityBoard
           opportunities={opportunitySeed}
           savedIds={savedByUser[workspaceId] ?? []}
@@ -440,7 +469,7 @@ function App() {
         />
       )}
 
-      {page === 'commander' && (
+      {visiblePage === 'commander' && (
         <JamieCommander
           accessByUser={accessByUser}
           modelByUser={modelByUser}
@@ -608,6 +637,89 @@ function CoworkerWorkspace({
         </div>
       </aside>
     </section>
+  );
+}
+
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = useState('login');
+  const [form, setForm] = useState({ userId: 'jamie', name: '', password: 'jamie-demo' });
+  const [status, setStatus] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setStatus('正在提交...');
+    const endpoint = mode === 'login' ? '/api/login' : '/api/register';
+    const body =
+      mode === 'login'
+        ? { userId: form.userId.trim().toLowerCase(), password: form.password }
+        : { name: form.name.trim(), userId: form.userId.trim().toLowerCase(), password: form.password };
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'auth_failed');
+      onAuth(payload);
+    } catch (error) {
+      setStatus(`失败：${error.message}`);
+    }
+  };
+
+  const switchMode = (nextMode) => {
+    setMode(nextMode);
+    setStatus('');
+    setForm((current) => ({
+      ...current,
+      userId: nextMode === 'login' ? 'jamie' : '',
+      password: nextMode === 'login' ? 'jamie-demo' : ''
+    }));
+  };
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <p className="eyebrow">EnterpriseOS</p>
+        <h1>{mode === 'login' ? '登录你的 Agent 工作台' : '注册新的同事 Agent'}</h1>
+        <div className="auth-tabs">
+          <button className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>
+            登录
+          </button>
+          <button className={mode === 'register' ? 'active' : ''} onClick={() => switchMode('register')}>
+            注册
+          </button>
+        </div>
+        <form className="auth-form" onSubmit={submit}>
+          {mode === 'register' && (
+            <label>
+              姓名
+              <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+            </label>
+          )}
+          <label>
+            用户 ID
+            <input value={form.userId} onChange={(event) => setForm((current) => ({ ...current, userId: event.target.value }))} />
+          </label>
+          <label>
+            密码
+            <input
+              type="password"
+              value={form.password}
+              onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+            />
+          </label>
+          <button className="auth-submit" type="submit">
+            {mode === 'login' ? '登录' : '创建账号和 Agent'}
+          </button>
+        </form>
+        <p className="auth-hint">
+          演示账号：Jamie 使用 `jamie / jamie-demo`，其他同事可用 `larry / demo`。
+        </p>
+        {status && <div className="auth-status">{status}</div>}
+      </section>
+    </main>
   );
 }
 

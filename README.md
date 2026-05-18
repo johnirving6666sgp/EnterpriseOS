@@ -5,6 +5,7 @@
 ## 第一版范围
 
 - 四页 UI 架构：同事桌面、内部信息流动仓、外部商机雷达看板、Jamie 最高权限控制台
+- 登录和注册模块：同事可登录自己的工作台，新同事可创建账号和默认 Agent
 - 给每位同事配置一个个人 Agent，支持文字和语音输入入口
 - 默认同事/Agent：Jamie、Larry、Gu、Xiaodong、Heli、Guihua、Zhiping
 - Agent 当前使用人姓名可修改，方便离职后转交给新同事
@@ -57,6 +58,7 @@ http://localhost:8787/
 ## 上线后端能力
 
 - `/api/login`：登录并返回服务端签名 token
+- `/api/register`：注册普通同事，并自动创建默认个人 Agent
 - `/api/state`：按权限返回应用状态；普通同事只能拿到自己的工作区
 - `/api/agents/:id/chat`：保存私密聊天并记录 token usage
 - `/api/agents/:id/route`：Jamie 配置个人 Agent 模型路由

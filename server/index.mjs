@@ -131,6 +131,42 @@ app.post('/api/login', async (req, res) => {
   res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
 });
 
+app.post('/api/register', async (req, res) => {
+  const { name, userId, password } = req.body ?? {};
+  const cleanId = String(userId || name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  const cleanName = String(name || userId || '').trim();
+  if (!cleanId || !cleanName || !password) return res.status(400).json({ error: 'name_userid_password_required' });
+
+  const store = await readStore();
+  if (store.users.some((item) => item.id === cleanId)) return res.status(409).json({ error: 'user_exists' });
+
+  store.users.push({ id: cleanId, name: cleanName, role: 'coworker', password, active: true });
+  store.agents[cleanId] = {
+    id: cleanId,
+    name: `${cleanName}_AI`,
+    ownerId: cleanId,
+    modelTier: 'lite',
+    provider: 'claude',
+    apiModel: 'claude-3-5-haiku',
+    active: true
+  };
+  store.conversations[cleanId] = [
+    { at: new Date().toISOString(), from: 'agent', text: `${cleanName}，你的专属助理已经创建。` }
+  ];
+  store.savedOpportunities[cleanId] = [];
+  store.usage[cleanId] = emptyUsage();
+  recordAudit(store, cleanId, 'user.registered', { userId: cleanId });
+  await writeStore(store);
+
+  const token = sign({ userId: cleanId, role: 'coworker', name: cleanName, iat: Date.now() });
+  res.status(201).json({ token, user: { id: cleanId, name: cleanName, role: 'coworker' } });
+});
+
 app.get('/api/state', requireAuth, async (req, res) => {
   const store = await readStore();
   if (req.session.role === 'super_admin') {

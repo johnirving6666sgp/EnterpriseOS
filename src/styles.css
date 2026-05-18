@@ -39,6 +39,77 @@ button:disabled {
   background: #f6f8fa;
 }
 
+.auth-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  background: #f6f8fa;
+}
+
+.auth-card {
+  width: min(460px, 100%);
+  padding: 24px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.auth-card h1 {
+  margin-bottom: 18px;
+  font-size: 34px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.auth-tabs button,
+.auth-submit {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  font-weight: 900;
+}
+
+.auth-tabs button {
+  color: #344054;
+  background: #eef2f6;
+}
+
+.auth-tabs button.active,
+.auth-submit {
+  color: #ffffff;
+  background: #172033;
+}
+
+.auth-form {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.auth-hint,
+.auth-status {
+  margin: 12px 0 0;
+  color: #667085;
+  line-height: 1.45;
+}
+
+.auth-status {
+  color: #9f1239;
+}
+
 .app-top,
 .workspace-page,
 .insight-page,
