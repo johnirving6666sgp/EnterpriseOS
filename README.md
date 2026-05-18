@@ -36,6 +36,15 @@ npm install
 npm run dev
 ```
 
+本地开发需要同时启动前端和后端：
+
+```bash
+npm run dev
+npm run dev:api
+```
+
+如果登录页提示“无法连接后端 API”，通常是 `8787` 后端没有启动。
+
 ## 生产运行
 
 ```bash

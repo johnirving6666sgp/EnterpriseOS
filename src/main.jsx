@@ -664,7 +664,10 @@ function AuthScreen({ onAuth }) {
       if (!response.ok) throw new Error(payload.error || 'auth_failed');
       onAuth(payload);
     } catch (error) {
-      setStatus(`失败：${error.message}`);
+      const message = ['Failed to fetch', 'Load failed'].includes(error.message)
+        ? '无法连接后端 API，请确认 npm run dev:api 或 npm start 正在运行。'
+        : error.message;
+      setStatus(`失败：${message}`);
     }
   };
 

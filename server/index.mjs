@@ -13,6 +13,10 @@ const publicDir = path.join(rootDir, 'dist');
 const PORT = Number(process.env.PORT || 8787);
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-enterprise-os-secret';
 const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || path.join(rootDir, 'vault', 'enterprise-os');
+const allowedOrigins = (process.env.APP_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,https://timeconnector.net,https://www.timeconnector.net')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const modelPricing = {
   lite: { inputPer1k: 0.0008, outputPer1k: 0.004 },
@@ -62,6 +66,19 @@ const seed = {
 };
 
 const app = express();
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json({ limit: '2mb' }));
 
 async function ensureStore() {
