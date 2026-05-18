@@ -236,6 +236,17 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   res.json({ conversation: store.conversations[id], usage: store.usage[id], reply: agentReply, llm });
 });
 
+app.post('/api/agents/:id/conversation/clear', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  if (req.session.role !== 'super_admin' && req.session.userId !== id) return res.status(403).json({ error: 'private_workspace' });
+  const store = await readStore();
+  if (!store.agents[id]) return res.status(404).json({ error: 'agent_not_found' });
+  store.conversations[id] = [];
+  recordAudit(store, req.session.userId, 'conversation.cleared', { agentId: id });
+  await writeStore(store);
+  res.json({ conversation: store.conversations[id] });
+});
+
 app.post('/api/agents/:id/route', requireAuth, requireJamie, async (req, res) => {
   const { id } = req.params;
   const { modelTier, provider, apiModel } = req.body ?? {};

@@ -373,6 +373,13 @@ function EnterpriseApp({ auth, onLogout }) {
       });
   };
 
+  const clearConversation = () => {
+    if (isThinking) return;
+    const id = workspaceId;
+    setMessagesByUser((current) => ({ ...current, [id]: [] }));
+    apiFetch(`/api/agents/${id}/conversation/clear`, { method: 'POST' }).catch(() => {});
+  };
+
   const appendConversation = (id, userText, agentText) => {
     setMessagesByUser((current) => ({
       ...current,
@@ -571,6 +578,7 @@ function EnterpriseApp({ auth, onLogout }) {
           startVoice={startVoice}
           stopVoice={stopVoice}
           sendMessage={sendMessage}
+          clearConversation={clearConversation}
           analyzeSaved={analyzeSaved}
           submitFeedback={submitFeedback}
         />
@@ -634,6 +642,7 @@ function CoworkerWorkspace({
   startVoice,
   stopVoice,
   sendMessage,
+  clearConversation,
   submitFeedback
 }) {
   return (
@@ -660,7 +669,10 @@ function CoworkerWorkspace({
       <section className="panel private-desktop">
         <div className="identity-line">
           <span>👤 {access.ownerName} 的数字空间</span>
-          <strong>{coworker.agent}</strong>
+          <div className="identity-actions">
+            <strong>{coworker.agent}</strong>
+            <button onClick={clearConversation} disabled={isThinking}>清空对话</button>
+          </div>
         </div>
         <div className="privacy-banner">
           <ShieldCheck size={17} />
