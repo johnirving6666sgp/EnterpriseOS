@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Bot,
@@ -232,6 +232,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const recognitionRef = useRef(null);
 
   const isJamie = auth.user.role === 'super_admin';
+  const visibleTeammates = isJamie ? teammates : teammates.filter((item) => item.id === auth.user.id);
   const visiblePage = isJamie ? page : page === 'commander' ? 'workspace' : page;
   const coworker = teammates.find((item) => item.id === workspaceId) ?? teammates[1];
   const access = accessByUser[workspaceId] ?? { active: true, ownerName: coworker.name };
@@ -251,11 +252,83 @@ function EnterpriseApp({ auth, onLogout }) {
     { calls: 0, input: 0, output: 0, cost: 0 }
   );
 
+  const apiFetch = (path, options = {}) =>
+    fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.token}`,
+        ...(options.headers ?? {})
+      }
+    });
+
+  useEffect(() => {
+    if (!isJamie && workspaceId !== auth.user.id) {
+      setWorkspaceId(auth.user.id);
+    }
+  }, [auth.user.id, isJamie, workspaceId]);
+
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/state')
+      .then((response) => {
+        if (!response.ok) throw new Error('state_load_failed');
+        return response.json();
+      })
+      .then((state) => {
+        if (!alive) return;
+        const usersById = Object.fromEntries((state.users ?? []).map((user) => [user.id, user]));
+        const agentEntries = Object.entries(state.agents ?? {});
+
+        setMessagesByUser({ ...baseMessages, ...(state.conversations ?? {}) });
+        setSavedByUser(state.savedOpportunities ?? {});
+        setBroadcasts(state.broadcasts ?? []);
+        setUsageByUser((current) => ({ ...current, ...(state.usage ?? {}) }));
+        setModelByUser((current) => ({
+          ...current,
+          ...Object.fromEntries(agentEntries.map(([id, agent]) => [id, agent.modelTier ?? current[id] ?? 'lite']))
+        }));
+        setRouteByUser((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            agentEntries.map(([id, agent]) => [
+              id,
+              {
+                provider: agent.provider ?? current[id]?.provider ?? 'claude',
+                apiModel: agent.apiModel ?? current[id]?.apiModel ?? 'claude-3-5-haiku'
+              }
+            ])
+          )
+        }));
+        setRouteBySystem((current) => ({ ...current, ...(state.systemAgents ?? {}) }));
+        setAccessByUser((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            agentEntries.map(([id, agent]) => [
+              id,
+              {
+                active: usersById[id]?.active !== false && agent.active !== false,
+                ownerName: usersById[id]?.name ?? current[id]?.ownerName ?? id
+              }
+            ])
+          )
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [auth.token]);
+
   const sendMessage = () => {
     const text = draft.trim();
     if (!text || !access.active) return;
-    const reply = makeReply(text, coworker, model);
+    const reply = makeReply(text, coworker, model, savedCards);
     appendConversation(workspaceId, text, reply);
+    apiFetch(`/api/agents/${workspaceId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ message: text, reply })
+    }).catch(() => {});
     setDraft('');
   };
 
@@ -439,6 +512,8 @@ function EnterpriseApp({ auth, onLogout }) {
           broadcasts={inboxBroadcasts}
           savedCards={savedCards}
           selectedId={workspaceId}
+          isJamie={isJamie}
+          visibleTeammates={visibleTeammates}
           setDraft={setDraft}
           setModel={setModel}
           setRoute={setRoute}
@@ -503,6 +578,8 @@ function CoworkerWorkspace({
   broadcasts,
   savedCards,
   selectedId,
+  isJamie,
+  visibleTeammates,
   setDraft,
   setModel,
   setRoute,
@@ -515,9 +592,15 @@ function CoworkerWorkspace({
   return (
     <section className="workspace-page">
       <aside className="panel coworker-switcher">
-        <h2>同事空间</h2>
-        {teammates.map((item) => (
-          <button key={item.id} className={selectedId === item.id ? 'active' : ''} onClick={() => setWorkspaceId(item.id)}>
+        <h2>{isJamie ? '同事空间' : '我的空间'}</h2>
+        {visibleTeammates.map((item) => (
+          <button
+            key={item.id}
+            className={selectedId === item.id ? 'active' : ''}
+            onClick={() => {
+              if (isJamie) setWorkspaceId(item.id);
+            }}
+          >
             <UserRound size={17} />
             <span>
               <strong>{item.name}</strong>
@@ -534,7 +617,9 @@ function CoworkerWorkspace({
         </div>
         <div className="privacy-banner">
           <ShieldCheck size={17} />
-          Larry 看不到 Gu 的空间，Gu 也点不进 Larry 的空间；内部信息 Agent 在底层读取原始文本做组织学习。
+          {isJamie
+            ? 'Jamie 可审查组织学习链路；普通同事只能进入自己的私密空间。'
+            : '这是你的私密工作区，其他同事不能进入；内部信息 Agent 只在系统底层做组织学习。'}
         </div>
         <div className="message-stream">
           {messages.map((message, index) => (
@@ -603,31 +688,41 @@ function CoworkerWorkspace({
 
       <aside className="panel model-capsule">
         <h2>模型与成本</h2>
-        <select value={model.id} onChange={(event) => setModel(selectedId, event.target.value)}>
-          {modelOptions.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label} · {item.short}
-            </option>
-          ))}
-        </select>
+        {isJamie ? (
+          <select value={model.id} onChange={(event) => setModel(selectedId, event.target.value)}>
+            {modelOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label} · {item.short}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <div className="capsule">{model.label} · {model.short}</div>
         <div className="route-card">
-          <label htmlFor="provider">模型平台</label>
-          <select id="provider" value={route.provider} onChange={(event) => setRoute(selectedId, { provider: event.target.value })}>
-            {providerOptions.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.label}
-              </option>
-            ))}
-          </select>
-          <label htmlFor="apiModel">具体模型</label>
-          <select id="apiModel" value={route.apiModel} onChange={(event) => setRoute(selectedId, { apiModel: event.target.value })}>
-            {(providerOptions.find((item) => item.id === route.provider) ?? providerOptions[0]).models.map((apiModel) => (
-              <option key={apiModel} value={apiModel}>
-                {apiModel}
-              </option>
-            ))}
-          </select>
+          {isJamie ? (
+            <>
+              <label htmlFor="provider">模型平台</label>
+              <select id="provider" value={route.provider} onChange={(event) => setRoute(selectedId, { provider: event.target.value })}>
+                {providerOptions.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="apiModel">具体模型</label>
+              <select id="apiModel" value={route.apiModel} onChange={(event) => setRoute(selectedId, { apiModel: event.target.value })}>
+                {(providerOptions.find((item) => item.id === route.provider) ?? providerOptions[0]).models.map((apiModel) => (
+                  <option key={apiModel} value={apiModel}>
+                    {apiModel}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <p className="route-readonly">
+              模型由 Jamie 统一配置：{route.provider} / {route.apiModel}
+            </p>
+          )}
         </div>
         <div className="cost-card">
           <span>今日调用</span>
@@ -1038,14 +1133,25 @@ function getModel(id) {
   return modelOptions.find((item) => item.id === id) ?? modelOptions[0];
 }
 
-function makeReply(text, coworker, model) {
+function makeReply(text, coworker, model, savedCards = []) {
+  if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(text)) {
+    return [
+      '我先按“材料专家 + 市场开发助理”的方式处理，不只是记录这句话。',
+      '1. 目标客户：优先找高校/研究院材料实验室、航空航天材料团队、金属粉末/增材制造企业、特种合金小试线。这些客户更可能需要悬浮真空熔炼设备，或需要新型金属材料研发能力。',
+      '2. 核心卖点：不要先卖设备，先卖“高纯熔炼、少污染、适合活泼/难熔金属、小批量研发验证、工艺参数可沉淀”。',
+      '3. 线索动作：本周整理 30 个潜在客户，按“已有材料课题、是否采购设备、是否有中试需求、联系人清晰度”打分。',
+      '4. 对外打法：先提供材料试制或工艺验证，再推进设备方案；这样客户决策门槛更低，也更容易发现真实预算。',
+      `5. 我会把这条需求沉淀成 ${coworker.agent} 的私密市场开发任务，并同步给内部信息 Agent 提炼“材料专家资产”。当前用 ${model.label}，如果要写正式客户方案，建议临时升到均衡或强模型。`
+    ].join('\n\n');
+  }
   if (/报价|航天|阀门|设备/.test(text)) {
-    return `我会用${model.label}（${model.short}）先整理客户场景、设备参数、报价风险和下一步沟通提纲。`;
+    return `我先把它拆成四件事：客户应用场景、关键设备参数、报价风险、下一步沟通提纲。当前用${model.label}（${model.short}）可以做初筛；如果要形成正式报价方案，建议 Jamie 临时切到强模型。`;
   }
   if (/商机|收藏|机会/.test(text)) {
-    return `我会把这条商机与内部专家资产匹配，并形成只在 ${coworker.agent} 私密空间里的判断。`;
+    const saved = savedCards.length ? `当前已收藏 ${savedCards.length} 条雷达线索，我会优先匹配这些线索。` : '你还没有收藏雷达线索，我会先基于当前问题做初步判断。';
+    return `${saved} 商机判断会只保留在 ${coworker.agent} 私密空间里，并抽象成不暴露原文的专家资产给内部信息 Agent。`;
   }
-  return `收到，我会纳入 ${coworker.agent} 的私密上下文，并在后台喂养内部信息 Agent。`;
+  return `收到。我会把这条信息放入 ${coworker.agent} 的私密上下文，先提取“客户、需求、参数、风险、下一步动作”五类要素，再把可复用经验抽象给内部信息 Agent。`;
 }
 
 function estimateTokens(text) {

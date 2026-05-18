@@ -462,6 +462,12 @@ select {
   font-weight: 900;
 }
 
+.route-readonly {
+  margin: 0;
+  color: #667085;
+  line-height: 1.45;
+}
+
 .route-stack {
   display: grid;
   gap: 6px;
@@ -847,7 +853,16 @@ select {
 
 @media (max-width: 720px) {
   .app-shell {
-    padding: 14px;
+    padding: 10px;
+  }
+
+  .app-top {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .eyebrow {
+    margin-bottom: 4px;
   }
 
   .voice-composer {
@@ -863,6 +878,31 @@ select {
   }
 
   h1 {
-    font-size: 32px;
+    font-size: 24px;
+    line-height: 1.12;
+  }
+
+  .top-nav button {
+    min-height: 36px;
+    padding: 0 10px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .message-stream {
+    min-height: 260px;
+    max-height: none;
+    padding: 10px;
+  }
+
+  .message {
+    max-width: 100%;
+    white-space: pre-line;
+  }
+
+  .identity-line span {
+    font-size: 20px;
   }
 }
