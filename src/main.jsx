@@ -355,11 +355,12 @@ function EnterpriseApp({ auth, onLogout }) {
     });
   };
 
-  const launchRecognition = () => {
-    if (!SpeechRecognition || !access.active || !voiceActiveRef.current) return;
+  const startVoice = () => {
+    if (!SpeechRecognition || !access.active || voiceActiveRef.current) return;
+    voiceActiveRef.current = true;
     const recognition = new SpeechRecognition();
     recognition.lang = 'zh-CN';
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.onstart = () => setListening(true);
     recognition.onresult = (event) => {
@@ -369,31 +370,19 @@ function EnterpriseApp({ auth, onLogout }) {
       setDraft(text);
     };
     recognition.onend = () => {
-      if (!voiceActiveRef.current) {
-        setListening(false);
-        return;
-      }
-      setTimeout(() => {
-        if (voiceActiveRef.current) launchRecognition();
-      }, 250);
+      voiceActiveRef.current = false;
+      setListening(false);
     };
-    recognition.onerror = () => {
-      if (!voiceActiveRef.current) setListening(false);
-    };
+    recognition.onerror = () => setListening(false);
     recognitionRef.current = recognition;
     recognition.start();
   };
 
-  const startVoice = () => {
-    if (!SpeechRecognition || !access.active) return;
-    if (voiceActiveRef.current) {
-      voiceActiveRef.current = false;
-      recognitionRef.current?.stop();
-      setListening(false);
-      return;
-    }
-    voiceActiveRef.current = true;
-    launchRecognition();
+  const stopVoice = () => {
+    if (!voiceActiveRef.current) return;
+    voiceActiveRef.current = false;
+    recognitionRef.current?.stop();
+    setListening(false);
   };
 
   const saveOpportunity = (id) => {
@@ -543,6 +532,7 @@ function EnterpriseApp({ auth, onLogout }) {
           setRoute={setRoute}
           setWorkspaceId={setWorkspaceId}
           startVoice={startVoice}
+          stopVoice={stopVoice}
           sendMessage={sendMessage}
           usage={usage}
           analyzeSaved={analyzeSaved}
@@ -609,6 +599,7 @@ function CoworkerWorkspace({
   setRoute,
   setWorkspaceId,
   startVoice,
+  stopVoice,
   sendMessage,
   submitFeedback,
   usage
@@ -653,9 +644,21 @@ function CoworkerWorkspace({
           ))}
         </div>
         <div className="voice-composer">
-          <button className={`mic-button ${listening ? 'recording' : ''}`} onClick={startVoice} disabled={!access.active}>
+          <button
+            className={`mic-button ${listening ? 'recording' : ''}`}
+            onMouseDown={startVoice}
+            onMouseUp={stopVoice}
+            onMouseLeave={stopVoice}
+            onTouchStart={(event) => {
+              event.preventDefault();
+              startVoice();
+            }}
+            onTouchEnd={stopVoice}
+            onTouchCancel={stopVoice}
+            disabled={!access.active}
+          >
             <Mic size={22} />
-            {listening ? '停止语音' : '开始语音'}
+            {listening ? '松开结束' : '按住说话'}
           </button>
           <input
             value={draft}
