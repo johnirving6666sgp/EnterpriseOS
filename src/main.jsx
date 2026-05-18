@@ -11,6 +11,7 @@ import {
   Layers3,
   Mic,
   Newspaper,
+  Paperclip,
   Send,
   ShieldCheck,
   Sparkles,
@@ -206,6 +207,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [workspaceId, setWorkspaceId] = useState(auth.user.role === 'super_admin' ? 'larry' : auth.user.id);
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
+  const [attachments, setAttachments] = useState([]);
   const [thinkingByUser, setThinkingByUser] = useState({});
   const [listening, setListening] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
@@ -351,27 +353,35 @@ function EnterpriseApp({ auth, onLogout }) {
 
   const sendMessage = () => {
     const text = draft.trim();
-    if (!text || !access.active || isThinking) return;
+    if ((!text && attachments.length === 0) || !access.active || isThinking) return;
     const id = workspaceId;
+    const attachedFiles = attachments;
+    const messageText = text || '请分析我上传的附件。';
+    const displayText = formatMessageWithAttachments(messageText, attachedFiles);
     const thinkingId = `thinking-${Date.now()}`;
     setThinkingByUser((current) => ({ ...current, [id]: true }));
     setMessagesByUser((current) => ({
       ...current,
-      [id]: [...(current[id] ?? []), { from: 'user', text }, { id: thinkingId, from: 'agent', text: '思考中...', thinking: true }]
+      [id]: [
+        ...(current[id] ?? []),
+        { from: 'user', text: displayText, attachments: attachedFiles },
+        { id: thinkingId, from: 'agent', text: '思考中...', thinking: true }
+      ]
     }));
     setDraft('');
+    setAttachments([]);
 
     const conversationContext = messages.slice(-6);
     apiFetch(`/api/agents/${id}/chat`, {
       method: 'POST',
-      body: JSON.stringify({ message: text })
+      body: JSON.stringify({ message: messageText, attachments: attachedFiles })
     })
       .then((response) => {
         if (!response.ok) throw new Error('agent_reply_failed');
         return response.json();
       })
       .then((payload) => {
-        const reply = payload.reply ?? makeReply(text, coworker, model, savedCards, conversationContext);
+        const reply = payload.reply ?? makeReply(displayText, coworker, model, savedCards, conversationContext);
         setMessagesByUser((current) => ({
           ...current,
           [id]: (current[id] ?? []).map((message) =>
@@ -381,12 +391,12 @@ function EnterpriseApp({ auth, onLogout }) {
         if (payload.usage) {
           setUsageByUser((current) => ({ ...current, [id]: payload.usage }));
         } else {
-          recordUsage(id, text, reply);
+          recordUsage(id, displayText, reply);
         }
       })
       .catch(() => {
-        const reply = makeReply(text, coworker, model, savedCards, conversationContext);
-        recordUsage(id, text, reply);
+        const reply = makeReply(displayText, coworker, model, savedCards, conversationContext);
+        recordUsage(id, displayText, reply);
         setMessagesByUser((current) => ({
           ...current,
           [id]: (current[id] ?? []).map((message) =>
@@ -412,6 +422,21 @@ function EnterpriseApp({ auth, onLogout }) {
       [id]: [...(current[id] ?? []), { from: 'user', text: userText }, { from: 'agent', text: agentText }]
     }));
     recordUsage(id, userText, agentText);
+  };
+
+  const addAttachments = (files) => {
+    const incoming = Array.from(files ?? []).slice(0, 8).map((file, index) => ({
+      id: `${file.name}-${file.size}-${Date.now()}-${index}`,
+      name: file.name,
+      size: file.size,
+      type: file.type || '未知类型'
+    }));
+    if (!incoming.length) return;
+    setAttachments((current) => [...current, ...incoming].slice(0, 8));
+  };
+
+  const removeAttachment = (fileId) => {
+    setAttachments((current) => current.filter((file) => file.id !== fileId));
   };
 
   const recordUsage = (id, inputText, outputText) => {
@@ -650,6 +675,7 @@ function EnterpriseApp({ auth, onLogout }) {
       {visiblePage === 'workspace' && (
         <CoworkerWorkspace
           access={access}
+          attachments={attachments}
           coworker={coworker}
           draft={draft}
           listening={listening}
@@ -667,6 +693,8 @@ function EnterpriseApp({ auth, onLogout }) {
           sendMessage={sendMessage}
           clearConversation={clearConversation}
           analyzeSaved={analyzeSaved}
+          addAttachments={addAttachments}
+          removeAttachment={removeAttachment}
           submitFeedback={submitFeedback}
         />
       )}
@@ -720,6 +748,8 @@ function EnterpriseApp({ auth, onLogout }) {
 function CoworkerWorkspace({
   access,
   analyzeSaved,
+  addAttachments,
+  attachments,
   coworker,
   draft,
   listening,
@@ -736,8 +766,11 @@ function CoworkerWorkspace({
   stopVoice,
   sendMessage,
   clearConversation,
+  removeAttachment,
   submitFeedback
 }) {
+  const uploadInputId = `upload-${selectedId}`;
+
   return (
     <section className="workspace-page">
       <aside className="panel coworker-switcher">
@@ -781,34 +814,66 @@ function CoworkerWorkspace({
           ))}
         </div>
         <div className="voice-composer">
-          <button
-            className={`mic-button ${listening ? 'recording' : ''}`}
-            onMouseDown={startVoice}
-            onMouseUp={stopVoice}
-            onMouseLeave={stopVoice}
-            onTouchStart={(event) => {
-              event.preventDefault();
-              startVoice();
-            }}
-            onTouchEnd={stopVoice}
-            onTouchCancel={stopVoice}
-            disabled={!access.active}
-          >
-            <Mic size={22} />
-            {listening ? '松开结束' : '按住说话'}
-          </button>
-          <input
-            value={draft}
-            disabled={!access.active || isThinking}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') sendMessage();
-            }}
-            placeholder={isThinking ? 'Agent 正在思考中...' : '说出现场信息、客户问题或报价想法...'}
-          />
-          <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking}>
-            <Send size={18} />
-          </button>
+          <div className="composer-input-row">
+            <input
+              value={draft}
+              disabled={!access.active || isThinking}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') sendMessage();
+              }}
+              placeholder={isThinking ? 'Agent 正在思考中...' : '说出现场信息、客户问题或报价想法...'}
+            />
+            <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking}>
+              <Send size={18} />
+            </button>
+          </div>
+          {attachments.length > 0 && (
+            <div className="attachment-preview">
+              {attachments.map((file) => (
+                <span className="attachment-chip" key={file.id}>
+                  <Paperclip size={14} />
+                  {file.name}
+                  <button type="button" onClick={() => removeAttachment(file.id)} aria-label={`移除 ${file.name}`}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="composer-tool-row">
+            <button
+              className={`mic-button ${listening ? 'recording' : ''}`}
+              onMouseDown={startVoice}
+              onMouseUp={stopVoice}
+              onMouseLeave={stopVoice}
+              onTouchStart={(event) => {
+                event.preventDefault();
+                startVoice();
+              }}
+              onTouchEnd={stopVoice}
+              onTouchCancel={stopVoice}
+              disabled={!access.active || isThinking}
+            >
+              <Mic size={20} />
+              {listening ? '松开结束' : '按住说话'}
+            </button>
+            <label className={`upload-button ${!access.active || isThinking ? 'disabled' : ''}`} htmlFor={uploadInputId}>
+              <Paperclip size={18} />
+              上传文件/图片
+              <input
+                id={uploadInputId}
+                type="file"
+                multiple
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md"
+                disabled={!access.active || isThinking}
+                onChange={(event) => {
+                  addAttachments(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+          </div>
         </div>
         <div className="saved-dock">
           <strong>雷达商机传送门</strong>
@@ -1339,6 +1404,18 @@ function estimateTokens(text) {
   const cjk = (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
   const words = (text.replace(/[\u4e00-\u9fff]/g, ' ').match(/[A-Za-z0-9_]+/g) ?? []).length;
   return Math.max(1, Math.ceil(cjk * 0.75 + words * 1.25));
+}
+
+function formatMessageWithAttachments(text, attachments = []) {
+  if (!attachments.length) return text;
+  const files = attachments.map((file) => `- ${file.name}（${file.type}，${formatFileSize(file.size)}）`).join('\n');
+  return `${text}\n\n[上传附件]\n${files}`;
+}
+
+function formatFileSize(size = 0) {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${size} B`;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

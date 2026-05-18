@@ -246,23 +246,25 @@ app.get('/api/state', requireAuth, async (req, res) => {
 app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   const { id } = req.params;
   if (req.session.role !== 'super_admin' && req.session.userId !== id) return res.status(403).json({ error: 'private_workspace' });
-  const { message, reply } = req.body ?? {};
+  const { message, reply, attachments } = req.body ?? {};
   if (!message) return res.status(400).json({ error: 'message_required' });
   const store = await readStore();
   const agent = store.agents[id];
   if (!agent?.active) return res.status(403).json({ error: 'agent_suspended' });
   const user = store.users.find((item) => item.id === id) ?? { id, name: id, role: 'coworker' };
+  const cleanAttachments = normalizeAttachments(attachments);
+  const messageForContext = formatMessageWithAttachments(message, cleanAttachments);
   let agentReply = reply;
   let llm = { provider: 'fallback', simulated: true };
   if (!agentReply) {
-    const generated = await generateAgentReply({ store, agent, user, message });
+    const generated = await generateAgentReply({ store, agent, user, message: messageForContext });
     agentReply = generated.reply;
     llm = generated.llm;
   }
   store.conversations[id] ??= [];
-  store.conversations[id].push({ at: new Date().toISOString(), from: 'user', text: message });
+  store.conversations[id].push({ at: new Date().toISOString(), from: 'user', text: messageForContext, attachments: cleanAttachments });
   store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: agentReply });
-  const usage = calculateUsage(message, agentReply, agent.modelTier);
+  const usage = calculateUsage(messageForContext, agentReply, agent.modelTier);
   store.usage[id] = mergeUsage(store.usage[id], usage);
   recordAudit(store, req.session.userId, 'chat.recorded', { agentId: id, usage, llm });
   await writeStore(store);
@@ -464,6 +466,33 @@ function calculateUsage(inputText, outputText, modelTier) {
     output,
     cost: (input / 1000) * pricing.inputPer1k + (output / 1000) * pricing.outputPer1k
   };
+}
+
+function normalizeAttachments(attachments = []) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .slice(0, 8)
+    .map((file) =>
+      compact({
+        id: String(file.id ?? ''),
+        name: String(file.name ?? '').slice(0, 160),
+        type: String(file.type ?? '未知类型').slice(0, 120),
+        size: Number.isFinite(Number(file.size)) ? Number(file.size) : 0
+      })
+    )
+    .filter((file) => file.name);
+}
+
+function formatMessageWithAttachments(message, attachments = []) {
+  if (!attachments.length) return message;
+  const fileLines = attachments.map((file) => `- ${file.name}（${file.type}，${formatFileSize(file.size)}）`).join('\n');
+  return `${message}\n\n[上传附件]\n${fileLines}`;
+}
+
+function formatFileSize(size = 0) {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${size} B`;
 }
 
 function mergeUsage(previous = emptyUsage(), next) {
