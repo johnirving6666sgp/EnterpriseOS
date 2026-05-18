@@ -22,6 +22,21 @@ npm start
 
 The production server serves the React app and API from one origin.
 
+## Domain
+
+Cloudflare domain:
+
+```text
+timeconnector.net
+```
+
+Recommended split for MVP:
+
+- `timeconnector.net`: Cloudflare Pages frontend
+- `api.timeconnector.net`: Express backend on Node server or Mac mini via Cloudflare Tunnel
+
+See `CLOUDFLARE.md` for the full domain deployment plan.
+
 ## MVP security rules
 
 - Only Jamie should receive `super_admin`.
