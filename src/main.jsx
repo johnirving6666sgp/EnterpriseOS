@@ -98,6 +98,21 @@ const teammates = [
   { id: 'zhiping', name: 'Zhiping', agent: 'Zhiping_AI', model: 'strong', role: '设备选型' }
 ];
 
+const recommendedAgentRoutes = {
+  jamie: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
+  larry: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  gu: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
+  xiaodong: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  heli: { modelTier: 'lite', provider: 'openrouter', apiModel: 'openrouter/anthropic/claude-3.5-haiku' },
+  guihua: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  zhiping: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' }
+};
+
+const recommendedSystemRoutes = {
+  internal: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
+};
+
 const baseMessages = {
   jamie: [{ from: 'agent', text: '我负责帮你观察这个小团队试用：权限、模型成本、同事反馈和专家资产。' }],
   larry: [
@@ -470,38 +485,79 @@ function EnterpriseApp({ auth, onLogout }) {
 
   const setModel = (id, modelId) => {
     setModelByUser((current) => ({ ...current, [id]: modelId }));
-    setRouteByUser((current) => ({
-      ...current,
-      [id]: { ...(current[id] ?? { provider: 'claude' }), apiModel: getModel(modelId).apiModel }
-    }));
+    apiFetch(`/api/agents/${id}/route`, {
+      method: 'POST',
+      body: JSON.stringify({ modelTier: modelId })
+    }).catch(() => {});
   };
 
   const setRoute = (id, patch) => {
+    let nextRoute;
     setRouteByUser((current) => {
       const previous = current[id] ?? { provider: 'claude', apiModel: getModel(modelByUser[id]).apiModel };
       const nextProvider = patch.provider ?? previous.provider;
       const provider = providerOptions.find((item) => item.id === nextProvider) ?? providerOptions[0];
       const nextModel = patch.provider ? provider.models[0] : patch.apiModel ?? previous.apiModel;
+      nextRoute = { provider: nextProvider, apiModel: nextModel };
       return {
         ...current,
-        [id]: { provider: nextProvider, apiModel: nextModel }
+        [id]: nextRoute
       };
     });
+    window.setTimeout(() => {
+      apiFetch(`/api/agents/${id}/route`, {
+        method: 'POST',
+        body: JSON.stringify(nextRoute)
+      }).catch(() => {});
+    }, 0);
   };
 
   const setSystemRoute = (id, patch) => {
+    let nextRoute;
     setRouteBySystem((current) => {
       const agent = systemAgents.find((item) => item.id === id) ?? systemAgents[0];
       const previous = current[id] ?? { provider: agent.defaultProvider, apiModel: agent.defaultModel };
       const nextProvider = patch.provider ?? previous.provider;
       const provider = providerOptions.find((item) => item.id === nextProvider) ?? providerOptions[0];
+      nextRoute = {
+        provider: nextProvider,
+        apiModel: patch.provider ? provider.models[0] : patch.apiModel ?? previous.apiModel
+      };
       return {
         ...current,
-        [id]: {
-          provider: nextProvider,
-          apiModel: patch.provider ? provider.models[0] : patch.apiModel ?? previous.apiModel
-        }
+        [id]: nextRoute
       };
+    });
+    window.setTimeout(() => {
+      apiFetch(`/api/system-agents/${id}/route`, {
+        method: 'POST',
+        body: JSON.stringify(nextRoute)
+      }).catch(() => {});
+    }, 0);
+  };
+
+  const applyRecommendedRoutes = () => {
+    setModelByUser((current) => ({
+      ...current,
+      ...Object.fromEntries(Object.entries(recommendedAgentRoutes).map(([id, route]) => [id, route.modelTier]))
+    }));
+    setRouteByUser((current) => ({
+      ...current,
+      ...Object.fromEntries(Object.entries(recommendedAgentRoutes).map(([id, route]) => [id, { provider: route.provider, apiModel: route.apiModel }]))
+    }));
+    setRouteBySystem((current) => ({ ...current, ...recommendedSystemRoutes }));
+
+    Object.entries(recommendedAgentRoutes).forEach(([id, route]) => {
+      apiFetch(`/api/agents/${id}/route`, {
+        method: 'POST',
+        body: JSON.stringify(route)
+      }).catch(() => {});
+    });
+    Object.entries(recommendedSystemRoutes).forEach(([id, route]) => {
+      apiFetch(`/api/system-agents/${id}/route`, {
+        method: 'POST',
+        body: JSON.stringify(route)
+      }).catch(() => {});
     });
   };
 
@@ -645,6 +701,7 @@ function EnterpriseApp({ auth, onLogout }) {
           setModel={setModel}
           setRoute={setRoute}
           setSystemRoute={setSystemRoute}
+          applyRecommendedRoutes={applyRecommendedRoutes}
           suspend={suspend}
           teammates={teammates}
           totalUsage={totalUsage}
@@ -1047,6 +1104,7 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
 
 function JamieCommander({
   accessByUser,
+  applyRecommendedRoutes,
   modelByUser,
   routeBySystem,
   routeByUser,
@@ -1064,6 +1122,7 @@ function JamieCommander({
       <div className="commander-hero">
         <p className="eyebrow">Jamie 小团队试用负责人</p>
         <h2>小团队模型、权限、成本与专家资产控制台</h2>
+        <button className="commander-action" onClick={applyRecommendedRoutes}>一键应用推荐 OpenRouter 配置</button>
       </div>
       <div className="funnel-row">
         <Metric label="小团队模型成本" value={`$${totalUsage.cost.toFixed(2)}`} />

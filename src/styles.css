@@ -806,6 +806,16 @@ select {
   background: #172033;
 }
 
+.commander-action {
+  margin-top: 12px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  color: #172033;
+  background: #ffffff;
+  font-weight: 900;
+}
+
 .command-table {
   display: grid;
   grid-template-columns: 1.2fr 0.9fr 1.2fr 0.9fr 0.8fr 1.4fr;
