@@ -560,22 +560,17 @@ function EnterpriseApp({ auth, onLogout }) {
           draft={draft}
           listening={listening}
           messages={messages}
-          model={model}
           isThinking={isThinking}
-          route={route}
           broadcasts={inboxBroadcasts}
           savedCards={savedCards}
           selectedId={workspaceId}
           isJamie={isJamie}
           visibleTeammates={visibleTeammates}
           setDraft={setDraft}
-          setModel={setModel}
-          setRoute={setRoute}
           setWorkspaceId={setWorkspaceId}
           startVoice={startVoice}
           stopVoice={stopVoice}
           sendMessage={sendMessage}
-          usage={usage}
           analyzeSaved={analyzeSaved}
           submitFeedback={submitFeedback}
         />
@@ -628,23 +623,18 @@ function CoworkerWorkspace({
   draft,
   listening,
   messages,
-  model,
   isThinking,
-  route,
   broadcasts,
   savedCards,
   selectedId,
   isJamie,
   visibleTeammates,
   setDraft,
-  setModel,
-  setRoute,
   setWorkspaceId,
   startVoice,
   stopVoice,
   sendMessage,
-  submitFeedback,
-  usage
+  submitFeedback
 }) {
   return (
     <section className="workspace-page">
@@ -754,54 +744,6 @@ function CoworkerWorkspace({
           )}
         </div>
       </section>
-
-      <aside className="panel model-capsule">
-        <h2>模型与成本</h2>
-        {isJamie ? (
-          <select value={model.id} onChange={(event) => setModel(selectedId, event.target.value)}>
-            {modelOptions.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label} · {item.short}
-              </option>
-            ))}
-          </select>
-        ) : null}
-        <div className="capsule">{model.label} · {model.short}</div>
-        <div className="route-card">
-          {isJamie ? (
-            <>
-              <label htmlFor="provider">模型平台</label>
-              <select id="provider" value={route.provider} onChange={(event) => setRoute(selectedId, { provider: event.target.value })}>
-                {providerOptions.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.label}
-                  </option>
-                ))}
-              </select>
-              <label htmlFor="apiModel">具体模型</label>
-              <select id="apiModel" value={route.apiModel} onChange={(event) => setRoute(selectedId, { apiModel: event.target.value })}>
-                {(providerOptions.find((item) => item.id === route.provider) ?? providerOptions[0]).models.map((apiModel) => (
-                  <option key={apiModel} value={apiModel}>
-                    {apiModel}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : (
-            <p className="route-readonly">
-              模型由 Jamie 统一配置：{route.provider} / {route.apiModel}
-            </p>
-          )}
-        </div>
-        <div className="cost-card">
-          <span>今日调用</span>
-          <strong>{usage.calls}</strong>
-          <span>Token</span>
-          <strong>{usage.input + usage.output}</strong>
-          <span>预估成本</span>
-          <strong>${usage.cost.toFixed(2)}</strong>
-        </div>
-      </aside>
     </section>
   );
 }

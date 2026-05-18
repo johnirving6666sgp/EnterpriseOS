@@ -193,7 +193,7 @@ h2 {
 
 .workspace-page {
   display: grid;
-  grid-template-columns: 240px minmax(420px, 1fr) 250px;
+  grid-template-columns: 240px minmax(420px, 1fr);
   gap: 12px;
 }
 
