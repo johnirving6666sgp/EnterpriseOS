@@ -38,7 +38,7 @@ const seed = {
     { id: 'xiaodong', name: 'Xiaodong', role: 'coworker', password: 'demo' },
     { id: 'heli', name: 'Heli', role: 'coworker', password: 'demo' },
     { id: 'guihua', name: 'Guihua', role: 'coworker', password: 'demo' },
-    { id: 'zhiping', name: 'Zhiping', role: 'coworker', password: 'demo', active: false }
+    { id: 'zhiping', name: 'Zhiping', role: 'coworker', password: 'demo' }
   ],
   agents: {
     jamie: { id: 'jamie', name: 'Jamie_AI', ownerId: 'jamie', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
@@ -47,7 +47,7 @@ const seed = {
     xiaodong: { id: 'xiaodong', name: 'Xiaodong_AI', ownerId: 'xiaodong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
     heli: { id: 'heli', name: 'Heli_AI', ownerId: 'heli', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
     guihua: { id: 'guihua', name: 'Guihua_AI', ownerId: 'guihua', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
-    zhiping: { id: 'zhiping', name: 'Zhiping_AI', ownerId: 'zhiping', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: false }
+    zhiping: { id: 'zhiping', name: 'Zhiping_AI', ownerId: 'zhiping', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true }
   },
   systemAgents: {
     internal: { name: '内部信息 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
@@ -70,7 +70,8 @@ const seed = {
     }
   ],
   usage: {},
-  auditLog: []
+  auditLog: [],
+  meta: { fullTeamTrialActivated: true }
 };
 
 const app = express();
@@ -93,6 +94,24 @@ async function ensureStore() {
   await fs.mkdir(dataDir, { recursive: true });
   try {
     await fs.access(storePath);
+    const store = JSON.parse(await fs.readFile(storePath, 'utf8'));
+    if (!store.meta?.fullTeamTrialActivated) {
+      for (const id of ['jamie', 'larry', 'gu', 'xiaodong', 'heli', 'guihua', 'zhiping']) {
+        const user = store.users?.find((item) => item.id === id);
+        if (user) user.active = true;
+        if (store.agents?.[id]) store.agents[id].active = true;
+      }
+      store.meta = { ...(store.meta ?? {}), fullTeamTrialActivated: true };
+      store.auditLog ??= [];
+      store.auditLog.unshift({
+        id: crypto.randomUUID(),
+        at: new Date().toISOString(),
+        actor: 'system',
+        action: 'trial.full_team_activated',
+        detail: { users: ['jamie', 'larry', 'gu', 'xiaodong', 'heli', 'guihua', 'zhiping'] }
+      });
+      await writeStore(store);
+    }
   } catch {
     await writeStore(seed);
   }

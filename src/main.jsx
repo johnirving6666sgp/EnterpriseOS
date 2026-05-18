@@ -99,6 +99,12 @@ const teammates = [
   { id: 'zhiping', name: 'Zhiping', agent: 'Zhiping_AI', model: 'strong', role: '设备选型' }
 ];
 
+const trialAccounts = teammates.map((item) => ({
+  id: item.id,
+  name: item.name,
+  password: item.id === 'jamie' ? 'jamie-demo' : 'demo'
+}));
+
 const recommendedAgentRoutes = {
   jamie: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
   larry: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
@@ -971,7 +977,7 @@ function AuthScreen({ onAuth }) {
       <section className="auth-card">
         <p className="eyebrow">EnterpriseOS · 小团队试用</p>
         <h1>{mode === 'login' ? '进入你的私密 Agent 工作台' : '创建新的同事 Agent'}</h1>
-        <p className="auth-subtitle">账号仅用于当前小团队试用；同事只能进入自己的空间，Jamie 负责权限和模型配置。</p>
+        <p className="auth-subtitle">账号仅用于当前全员试用；每位同事只能进入自己的空间，Jamie 负责权限和模型配置。</p>
         <div className="auth-tabs">
           <button className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>
             登录
@@ -1010,10 +1016,21 @@ function AuthScreen({ onAuth }) {
             {busy ? '处理中...' : mode === 'login' ? '登录' : '创建账号和 Agent'}
           </button>
         </form>
-        <div className="auth-demo-actions">
-          <button onClick={() => setForm((current) => ({ ...current, userId: 'jamie', password: 'jamie-demo' }))}>填入 Jamie 试用账号</button>
-          <button onClick={() => setForm((current) => ({ ...current, userId: 'guihua', password: 'demo' }))}>填入 Guihua 试用账号</button>
-        </div>
+        {mode === 'login' && (
+          <div className="auth-demo-area">
+            <strong>全员试用账号</strong>
+            <div className="auth-demo-actions">
+              {trialAccounts.map((account) => (
+                <button
+                  key={account.id}
+                  onClick={() => setForm((current) => ({ ...current, userId: account.id, password: account.password }))}
+                >
+                  {account.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <p className="auth-hint">注册需要 Jamie 提供的邀请码；密码至少 8 位。</p>
         {status && <div className="auth-status">{status}</div>}
       </section>

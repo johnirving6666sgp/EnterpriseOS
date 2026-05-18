@@ -116,11 +116,21 @@ button:disabled {
   color: #9f1239;
 }
 
-.auth-demo-actions {
+.auth-demo-area {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 12px;
+}
+
+.auth-demo-area strong {
+  color: #344054;
+  font-size: 13px;
+}
+
+.auth-demo-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .auth-demo-actions button {
@@ -1029,6 +1039,10 @@ select {
 
   .composer-tool-row {
     grid-template-columns: 1fr;
+  }
+
+  .auth-demo-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .identity-line {
