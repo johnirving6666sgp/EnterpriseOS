@@ -335,8 +335,9 @@ function EnterpriseApp({ auth, onLogout }) {
     }));
     setDraft('');
 
+    const conversationContext = messages.slice(-6);
     window.setTimeout(() => {
-      const reply = makeReply(text, coworker, model, savedCards);
+      const reply = makeReply(text, coworker, model, savedCards, conversationContext);
       setMessagesByUser((current) => ({
         ...current,
         [id]: (current[id] ?? []).map((message) =>
@@ -1181,7 +1182,33 @@ function getModel(id) {
   return modelOptions.find((item) => item.id === id) ?? modelOptions[0];
 }
 
-function makeReply(text, coworker, model, savedCards = []) {
+function makeReply(text, coworker, model, savedCards = [], conversationContext = []) {
+  const lastUserQuestion = [...conversationContext].reverse().find((message) => message.from === 'user')?.text ?? '';
+  const asksForBetterAnswer = /不对|不正确|没回答|重新回答|换个回答|什么意思|没听懂|不满意/.test(text);
+  if (asksForBetterAnswer) {
+    return [
+      '你说得对，刚才那个回答没有真正回答问题。我应该先判断你要的是“系统怎么更好服务同事”，而不是把这句话机械归档。',
+      '更好的回答是：',
+      '1. 同事入口要更像工作助手，而不是后台系统。每个人打开后只看到自己的任务、对话、收藏商机和需要反馈的广播。',
+      '2. Agent 要先解决当下问题：把客户问题转成报价草稿、把会议纪要转成分工、把技术问题转成排查步骤，而不是只说“我会记录”。',
+      '3. 组织学习要在后台发生：同事不需要理解内部信息 Agent，系统自动把高价值问答沉淀成材料专家、设备专家、报价知识卡。',
+      '4. Jamie 的管理页只做三件事：看成本和模型、看权限和移交、审批哪些知识可以广播给大家。',
+      '5. 下一版最该补的是“真实大模型回复 + 最近对话上下文 + 可追踪任务卡”。这样同事才会觉得它是在帮忙工作，而不是一个演示页面。',
+      lastUserQuestion ? `我重新回答的是你前面这句：“${lastUserQuestion}”。` : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  if (/系统|平台|企业OS|更好|服务|同事|同志|怎么做|如何做/.test(text)) {
+    return [
+      '要让企业OS更好地服务同事，重点不是堆功能，而是让每次交流都变成可执行结果。',
+      '1. 对同事：聊天后直接生成下一步动作，比如客户跟进、报价准备、技术确认、资料补充，而不是只回复一段话。',
+      '2. 对 Jamie：把全员信息自动汇总成“今日风险、今日商机、待审批知识、模型成本”四个看板。',
+      '3. 对组织：内部信息 Agent 不展示原始隐私聊天给其他同事，只抽象出材料专家、设备专家、报价话术这些可复用资产。',
+      '4. 对商机：外部机会 Agent 不是简单放新闻，而是按公司能力匹配，提示谁适合跟、怎么开口、需要哪些技术资料。',
+      '5. 对上线试用：先把 Jamie 和 Guihua 的真实工作流跑顺，例如 Guihua 负责材料/客户线索，Jamie 负责广播、模型和权限。'
+    ].join('\n\n');
+  }
   if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(text)) {
     return [
       '我先按“材料专家 + 市场开发助理”的方式处理，不只是记录这句话。',
