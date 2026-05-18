@@ -65,7 +65,7 @@ const providerOptions = [
   {
     id: 'openrouter',
     label: 'OpenRouter',
-    models: ['openrouter/anthropic/claude-3.7-sonnet', 'openrouter/openai/gpt-4.1', 'openrouter/meta-llama/llama-3.3-70b']
+    models: ['openrouter/openai/gpt-4.1-mini', 'openrouter/openai/gpt-4.1', 'openrouter/anthropic/claude-3.5-haiku']
   }
 ];
 
@@ -74,17 +74,17 @@ const systemAgents = [
     id: 'internal',
     name: '内部信息 Agent',
     job: '读取小团队试用对话、提炼协作洞察、沉淀专家资产',
-    defaultProvider: 'claude',
-    defaultModel: 'claude-3-7-sonnet',
-    reason: '需要长上下文、稳定归纳和较强推理，默认用 Sonnet；发布专家资产前可临时升 Opus。'
+    defaultProvider: 'openrouter',
+    defaultModel: 'openrouter/openai/gpt-4.1-mini',
+    reason: '需要稳定归纳和较低试用成本，默认走 OpenRouter 的 GPT-4.1 mini；重要专家资产可临时升 GPT-4.1。'
   },
   {
     id: 'external',
     name: '外部机会 Agent',
     job: '抓取新闻和企业动态，筛选商机并匹配内部专家能力',
     defaultProvider: 'openrouter',
-    defaultModel: 'openrouter/openai/gpt-4.1',
-    reason: '需要高吞吐、多来源路由和成本控制，默认走 OpenRouter；深度研判再交给强模型。'
+    defaultModel: 'openrouter/openai/gpt-4.1-mini',
+    reason: '需要高吞吐、多来源路由和成本控制，默认走 OpenRouter GPT-4.1 mini；深度研判再升 GPT-4.1。'
   }
 ];
 

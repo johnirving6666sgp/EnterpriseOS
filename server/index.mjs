@@ -48,8 +48,8 @@ const seed = {
     zhiping: { id: 'zhiping', name: 'Zhiping_AI', ownerId: 'zhiping', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: false }
   },
   systemAgents: {
-    internal: { name: '内部信息 Agent', provider: 'claude', apiModel: 'claude-3-7-sonnet' },
-    external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' }
+    internal: { name: '内部信息 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+    external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
   },
   conversations: {},
   systemAgentOutputs: { internal: [], external: [] },
@@ -450,7 +450,7 @@ function toOpenRouterModel(apiModel = '') {
   const clean = String(apiModel).replace(/^openrouter\//, '');
   const modelMap = {
     'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
-    'claude-3-7-sonnet': 'anthropic/claude-3.7-sonnet',
+    'claude-3-7-sonnet': 'openai/gpt-4.1-mini',
     'claude-opus-4': 'anthropic/claude-opus-4',
     'gpt-4.1-mini': 'openai/gpt-4.1-mini',
     'gpt-4.1': 'openai/gpt-4.1',
