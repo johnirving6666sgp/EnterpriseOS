@@ -73,7 +73,7 @@ const systemAgents = [
   {
     id: 'internal',
     name: '内部信息 Agent',
-    job: '读取原始聊天、提炼组织洞察、沉淀专家资产',
+    job: '读取小团队试用对话、提炼协作洞察、沉淀专家资产',
     defaultProvider: 'claude',
     defaultModel: 'claude-3-7-sonnet',
     reason: '需要长上下文、稳定归纳和较强推理，默认用 Sonnet；发布专家资产前可临时升 Opus。'
@@ -89,7 +89,7 @@ const systemAgents = [
 ];
 
 const teammates = [
-  { id: 'jamie', name: 'Jamie', agent: 'Jamie_AI', model: 'strong', role: '系统最高权限' },
+  { id: 'jamie', name: 'Jamie', agent: 'Jamie_AI', model: 'strong', role: '小团队试用负责人' },
   { id: 'larry', name: 'Larry', agent: 'Larry_AI', model: 'balanced', role: '客户与设备现场' },
   { id: 'gu', name: 'Gu', agent: 'Gu_AI', model: 'strong', role: '工艺与设备参数' },
   { id: 'xiaodong', name: 'Xiaodong', agent: 'Xiaodong_AI', model: 'balanced', role: '项目协作' },
@@ -99,7 +99,7 @@ const teammates = [
 ];
 
 const baseMessages = {
-  jamie: [{ from: 'agent', text: '我负责帮你监控全局成本、权限、模型和专家资产。' }],
+  jamie: [{ from: 'agent', text: '我负责帮你观察这个小团队试用：权限、模型成本、同事反馈和专家资产。' }],
   larry: [
     { from: 'agent', text: 'Larry，我会保留你的客户现场上下文，并帮你把收藏商机转成报价和跟进方案。' },
     { from: 'user', text: '某航天厂可能急需高压阀门，我想先判断是否值得跟进。' }
@@ -1023,11 +1023,11 @@ function JamieCommander({
   return (
     <section className="commander-page">
       <div className="commander-hero">
-        <p className="eyebrow">Jamie 系统最高权限</p>
-        <h2>全局模型、权限、成本与专家资产控制台</h2>
+        <p className="eyebrow">Jamie 小团队试用负责人</p>
+        <h2>小团队模型、权限、成本与专家资产控制台</h2>
       </div>
       <div className="funnel-row">
-        <Metric label="三家公司模型成本" value={`$${totalUsage.cost.toFixed(2)}`} />
+        <Metric label="小团队模型成本" value={`$${totalUsage.cost.toFixed(2)}`} />
         <Metric label="总调用" value={totalUsage.calls} />
         <Metric label="总 Token" value={totalUsage.input + totalUsage.output} />
         <Metric label="强模型助理" value={Object.values(modelByUser).filter((id) => id === 'strong').length} />
@@ -1050,7 +1050,7 @@ function JamieCommander({
                   <strong>{item.agent}</strong>
                   <small>{access.ownerName}</small>
                 </div>
-                <div>{item.id === 'jamie' ? '👑 最高权限' : access.active ? '🟢 活跃中' : '🔴 已中止'}</div>
+                <div>{item.id === 'jamie' ? '👑 试用负责人' : access.active ? '🟢 活跃中' : '🔴 已中止'}</div>
                 <div>
                   <div className="route-stack">
                     <select value={modelByUser[item.id]} onChange={(event) => setModel(item.id, event.target.value)}>
