@@ -191,6 +191,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [workspaceId, setWorkspaceId] = useState(auth.user.role === 'super_admin' ? 'larry' : auth.user.id);
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
+  const [thinkingByUser, setThinkingByUser] = useState({});
   const [listening, setListening] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
   const [broadcasted, setBroadcasted] = useState([]);
@@ -240,6 +241,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const model = getModel(modelByUser[workspaceId]);
   const route = routeByUser[workspaceId] ?? { provider: 'claude', apiModel: model.apiModel };
   const messages = messagesByUser[workspaceId] ?? [];
+  const isThinking = thinkingByUser[workspaceId] === true;
   const usage = usageByUser[workspaceId] ?? { calls: 0, input: 0, output: 0, cost: 0 };
   const savedCards = opportunitySeed.filter((item) => (savedByUser[workspaceId] ?? []).includes(item.id));
   const inboxBroadcasts = broadcasts.filter((item) => item.recipients.includes(workspaceId));
@@ -323,14 +325,31 @@ function EnterpriseApp({ auth, onLogout }) {
 
   const sendMessage = () => {
     const text = draft.trim();
-    if (!text || !access.active) return;
-    const reply = makeReply(text, coworker, model, savedCards);
-    appendConversation(workspaceId, text, reply);
-    apiFetch(`/api/agents/${workspaceId}/chat`, {
-      method: 'POST',
-      body: JSON.stringify({ message: text, reply })
-    }).catch(() => {});
+    if (!text || !access.active || isThinking) return;
+    const id = workspaceId;
+    const thinkingId = `thinking-${Date.now()}`;
+    setThinkingByUser((current) => ({ ...current, [id]: true }));
+    setMessagesByUser((current) => ({
+      ...current,
+      [id]: [...(current[id] ?? []), { from: 'user', text }, { id: thinkingId, from: 'agent', text: '思考中...', thinking: true }]
+    }));
     setDraft('');
+
+    window.setTimeout(() => {
+      const reply = makeReply(text, coworker, model, savedCards);
+      setMessagesByUser((current) => ({
+        ...current,
+        [id]: (current[id] ?? []).map((message) =>
+          message.id === thinkingId ? { from: 'agent', text: reply } : message
+        )
+      }));
+      recordUsage(id, text, reply);
+      setThinkingByUser((current) => ({ ...current, [id]: false }));
+      apiFetch(`/api/agents/${id}/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ message: text, reply })
+      }).catch(() => {});
+    }, 650);
   };
 
   const appendConversation = (id, userText, agentText) => {
@@ -521,6 +540,7 @@ function EnterpriseApp({ auth, onLogout }) {
           listening={listening}
           messages={messages}
           model={model}
+          isThinking={isThinking}
           route={route}
           broadcasts={inboxBroadcasts}
           savedCards={savedCards}
@@ -588,6 +608,7 @@ function CoworkerWorkspace({
   listening,
   messages,
   model,
+  isThinking,
   route,
   broadcasts,
   savedCards,
@@ -638,7 +659,7 @@ function CoworkerWorkspace({
         </div>
         <div className="message-stream">
           {messages.map((message, index) => (
-            <div className={`message ${message.from}`} key={`${message.from}-${index}`}>
+            <div className={`message ${message.from} ${message.thinking ? 'thinking' : ''}`} key={message.id ?? `${message.from}-${index}`}>
               {message.text}
             </div>
           ))}
@@ -662,14 +683,14 @@ function CoworkerWorkspace({
           </button>
           <input
             value={draft}
-            disabled={!access.active}
+            disabled={!access.active || isThinking}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') sendMessage();
             }}
-            placeholder="说出现场信息、客户问题或报价想法..."
+            placeholder={isThinking ? 'Agent 正在思考中...' : '说出现场信息、客户问题或报价想法...'}
           />
-          <button className="send-button" onClick={sendMessage} disabled={!access.active}>
+          <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking}>
             <Send size={18} />
           </button>
         </div>

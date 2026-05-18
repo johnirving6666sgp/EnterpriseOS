@@ -308,6 +308,29 @@ h2 {
   align-self: flex-start;
 }
 
+.message.thinking {
+  color: #667085;
+  background: #ffffff;
+}
+
+.message.thinking::after {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #cbd5e1 25%, #667085 50%, #cbd5e1 75%);
+  background-size: 200% 100%;
+  animation: thinking-pulse 1s infinite linear;
+}
+
+@keyframes thinking-pulse {
+  to {
+    background-position: -200% 0;
+  }
+}
+
 .saved-dock,
 .broadcast-inbox {
   padding: 10px;
