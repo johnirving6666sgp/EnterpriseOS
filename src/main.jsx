@@ -336,21 +336,41 @@ function EnterpriseApp({ auth, onLogout }) {
     setDraft('');
 
     const conversationContext = messages.slice(-6);
-    window.setTimeout(() => {
-      const reply = makeReply(text, coworker, model, savedCards, conversationContext);
-      setMessagesByUser((current) => ({
-        ...current,
-        [id]: (current[id] ?? []).map((message) =>
-          message.id === thinkingId ? { from: 'agent', text: reply } : message
-        )
-      }));
-      recordUsage(id, text, reply);
-      setThinkingByUser((current) => ({ ...current, [id]: false }));
-      apiFetch(`/api/agents/${id}/chat`, {
-        method: 'POST',
-        body: JSON.stringify({ message: text, reply })
-      }).catch(() => {});
-    }, 650);
+    apiFetch(`/api/agents/${id}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ message: text })
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('agent_reply_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        const reply = payload.reply ?? makeReply(text, coworker, model, savedCards, conversationContext);
+        setMessagesByUser((current) => ({
+          ...current,
+          [id]: (current[id] ?? []).map((message) =>
+            message.id === thinkingId ? { from: 'agent', text: reply } : message
+          )
+        }));
+        if (payload.usage) {
+          setUsageByUser((current) => ({ ...current, [id]: payload.usage }));
+        } else {
+          recordUsage(id, text, reply);
+        }
+      })
+      .catch(() => {
+        const reply = makeReply(text, coworker, model, savedCards, conversationContext);
+        recordUsage(id, text, reply);
+        setMessagesByUser((current) => ({
+          ...current,
+          [id]: (current[id] ?? []).map((message) =>
+            message.id === thinkingId ? { from: 'agent', text: `${reply}\n\n（后端暂时没有返回，已使用本地降级回复。）` } : message
+          )
+        }));
+      })
+      .finally(() => {
+        setThinkingByUser((current) => ({ ...current, [id]: false }));
+      });
   };
 
   const appendConversation = (id, userText, agentText) => {

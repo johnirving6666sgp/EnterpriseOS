@@ -41,6 +41,9 @@ NODE_ENV=production
 SESSION_SECRET=<long random string>
 DATA_DIR=/var/data
 APP_ORIGINS=https://enterprise-os.onrender.com,https://timeconnector.net,https://www.timeconnector.net
+OPENROUTER_API_KEY=<your OpenRouter key>
+OPENROUTER_SITE_URL=https://timeconnector.net
+OPENROUTER_APP_NAME=EnterpriseOS
 ```
 
 Trial accounts:

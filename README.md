@@ -80,6 +80,18 @@ http://localhost:8787/
 - `/api/llm/proxy`：大模型代理入口，API Key 只放后端
 - `/api/obsidian/sync`：将对话、Agent 注册表、审计日志和系统 Agent 配置写入 Obsidian Markdown
 
+## OpenRouter
+
+线上试用时在 Render 环境变量里设置：
+
+```text
+OPENROUTER_API_KEY=<your OpenRouter key>
+OPENROUTER_SITE_URL=https://timeconnector.net
+OPENROUTER_APP_NAME=EnterpriseOS
+```
+
+设置后，个人 Agent 对话会由后端调用 OpenRouter 生成真实回复；没有配置 key 时会自动使用本地降级回复。
+
 ## 后续最小后端
 
 当前已经加入轻量 Express 后端和文件数据库 `data/store.json`。下一步要替换成正式数据库、真实 LLM API 调用、真实新闻抓取和生产级登录系统。

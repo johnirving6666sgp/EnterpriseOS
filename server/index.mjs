@@ -13,6 +13,10 @@ const publicDir = path.join(rootDir, 'dist');
 const PORT = Number(process.env.PORT || 8787);
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-enterprise-os-secret';
 const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || path.join(rootDir, 'vault', 'enterprise-os');
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
+const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const allowedOrigins = (process.env.APP_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,https://timeconnector.net,https://www.timeconnector.net')
   .split(',')
   .map((origin) => origin.trim())
@@ -210,18 +214,26 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   const { id } = req.params;
   if (req.session.role !== 'super_admin' && req.session.userId !== id) return res.status(403).json({ error: 'private_workspace' });
   const { message, reply } = req.body ?? {};
-  if (!message || !reply) return res.status(400).json({ error: 'message_and_reply_required' });
+  if (!message) return res.status(400).json({ error: 'message_required' });
   const store = await readStore();
   const agent = store.agents[id];
   if (!agent?.active) return res.status(403).json({ error: 'agent_suspended' });
+  const user = store.users.find((item) => item.id === id) ?? { id, name: id, role: 'coworker' };
+  let agentReply = reply;
+  let llm = { provider: 'fallback', simulated: true };
+  if (!agentReply) {
+    const generated = await generateAgentReply({ store, agent, user, message });
+    agentReply = generated.reply;
+    llm = generated.llm;
+  }
   store.conversations[id] ??= [];
   store.conversations[id].push({ at: new Date().toISOString(), from: 'user', text: message });
-  store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: reply });
-  const usage = calculateUsage(message, reply, agent.modelTier);
+  store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: agentReply });
+  const usage = calculateUsage(message, agentReply, agent.modelTier);
   store.usage[id] = mergeUsage(store.usage[id], usage);
-  recordAudit(store, req.session.userId, 'chat.recorded', { agentId: id, usage });
+  recordAudit(store, req.session.userId, 'chat.recorded', { agentId: id, usage, llm });
   await writeStore(store);
-  res.json({ conversation: store.conversations[id], usage: store.usage[id] });
+  res.json({ conversation: store.conversations[id], usage: store.usage[id], reply: agentReply, llm });
 });
 
 app.post('/api/agents/:id/route', requireAuth, requireJamie, async (req, res) => {
@@ -332,9 +344,23 @@ app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
 app.post('/api/llm/proxy', requireAuth, async (req, res) => {
   const { provider, apiModel, messages = [] } = req.body ?? {};
   const prompt = messages.map((item) => item.content).join('\n');
-  const simulatedReply = `已通过 ${provider}/${apiModel} 接收请求。生产环境会在后端安全注入 API Key 并返回真实模型响应。`;
-  const usage = calculateUsage(prompt, simulatedReply, 'balanced');
-  res.json({ provider, apiModel, reply: simulatedReply, usage, simulated: true });
+  if (!OPENROUTER_API_KEY) {
+    const simulatedReply = `OpenRouter API key 尚未配置。已收到 ${provider}/${apiModel} 请求，但当前只能返回本地降级回复。`;
+    const usage = calculateUsage(prompt, simulatedReply, 'balanced');
+    return res.json({ provider, apiModel, reply: simulatedReply, usage, simulated: true });
+  }
+  try {
+    const result = await callOpenRouter({
+      model: toOpenRouterModel(apiModel),
+      messages,
+      temperature: 0.4,
+      maxTokens: 900
+    });
+    const usage = calculateUsage(prompt, result.reply, 'balanced');
+    res.json({ provider: 'openrouter', apiModel: result.model, reply: result.reply, usage, simulated: false });
+  } catch (error) {
+    res.status(502).json({ error: 'openrouter_failed', detail: error.message });
+  }
 });
 
 app.post('/api/obsidian/sync', requireAuth, requireJamie, async (_req, res) => {
@@ -383,6 +409,102 @@ function mergeUsage(previous = emptyUsage(), next) {
     output: previous.output + next.output,
     cost: previous.cost + next.cost
   };
+}
+
+function toOpenRouterModel(apiModel = '') {
+  const clean = String(apiModel).replace(/^openrouter\//, '');
+  const modelMap = {
+    'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
+    'claude-3-7-sonnet': 'anthropic/claude-3.7-sonnet',
+    'claude-opus-4': 'anthropic/claude-opus-4',
+    'gpt-4.1-mini': 'openai/gpt-4.1-mini',
+    'gpt-4.1': 'openai/gpt-4.1',
+    'gpt-5.2': 'openai/gpt-5.2'
+  };
+  return modelMap[clean] ?? clean ?? 'anthropic/claude-3.5-haiku';
+}
+
+async function generateAgentReply({ store, agent, user, message }) {
+  if (!OPENROUTER_API_KEY) {
+    return {
+      reply: fallbackAgentReply({ agent, user, message }),
+      llm: { provider: 'fallback', simulated: true, reason: 'missing_openrouter_key' }
+    };
+  }
+
+  const recent = (store.conversations[user.id] ?? []).slice(-10).map((item) => ({
+    role: item.from === 'user' ? 'user' : 'assistant',
+    content: item.text
+  }));
+  const model = toOpenRouterModel(agent.apiModel);
+  try {
+    const result = await callOpenRouter({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            `你是 ${agent.name}，服务对象是 ${user.name}。`,
+            '你在 EnterpriseOS 里工作。公司方向：悬浮真空熔炼设备、新型金属材料研发、材料选型、设备选型、客户开发和商机判断。',
+            '回答要求：直接帮助用户解决当下问题；不要只说“我会记录”；优先输出可执行建议、下一步动作、客户/技术/风险判断。',
+            '隐私规则：同事之间的私密聊天不可互相暴露；内部信息 Agent 只能抽象沉淀组织知识，不要泄露其他同事原文。',
+            '如果用户指出回答不对，先承认并基于上一轮上下文重新回答。用中文，简洁但有内容。'
+          ].join('\n')
+        },
+        ...recent,
+        { role: 'user', content: message }
+      ],
+      temperature: 0.45,
+      maxTokens: 1100
+    });
+    return {
+      reply: result.reply,
+      llm: { provider: 'openrouter', model: result.model, simulated: false }
+    };
+  } catch (error) {
+    return {
+      reply: `${fallbackAgentReply({ agent, user, message })}\n\n（OpenRouter 调用失败，已使用本地降级回复：${error.message}）`,
+      llm: { provider: 'fallback', model, simulated: true, error: error.message }
+    };
+  }
+}
+
+async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 900 }) {
+  const response = await fetch(OPENROUTER_BASE_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': OPENROUTER_SITE_URL,
+      'X-Title': OPENROUTER_APP_NAME
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error?.message || payload.message || `OpenRouter HTTP ${response.status}`);
+  }
+  const reply = payload.choices?.[0]?.message?.content?.trim();
+  if (!reply) throw new Error('OpenRouter returned an empty reply');
+  return { reply, model: payload.model ?? model };
+}
+
+function fallbackAgentReply({ agent, user, message }) {
+  if (/不对|不正确|没回答|重新回答|换个回答|没听懂|不满意/.test(message)) {
+    return `你说得对，我刚才没有回答到点上。作为 ${agent.name}，我应该先围绕 ${user.name} 的真实工作问题给出下一步动作，而不是只说记录和沉淀。下一步我建议：明确问题目标、拆出客户/技术/风险/动作四类信息，再形成可执行任务。`;
+  }
+  if (/系统|企业OS|服务|同事|怎么做|如何做/.test(message)) {
+    return '要让企业OS更好服务同事，关键是让每次对话直接产出行动：客户跟进、报价草稿、技术排查、会议分工、商机判断。内部知识沉淀应在后台自动发生，不要干扰同事完成眼前工作。';
+  }
+  if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(message)) {
+    return '建议先锁定高校/研究院材料实验室、航空航天材料团队、金属粉末与增材制造企业、特种合金小试线。先卖“材料试制/工艺验证”，再推进设备方案，这比直接卖设备更容易打开客户。';
+  }
+  return `收到。我会以 ${agent.name} 的身份先理解问题本身，再给 ${user.name} 输出可执行建议；如果信息不足，我会追问关键条件，而不是只做归档。`;
 }
 
 function redactPasswords(store) {
