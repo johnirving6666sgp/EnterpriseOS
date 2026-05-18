@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
-const dataDir = path.join(rootDir, 'data');
+const dataDir = process.env.DATA_DIR || path.join(rootDir, 'data');
 const storePath = path.join(dataDir, 'store.json');
 const publicDir = path.join(rootDir, 'dist');
 const PORT = Number(process.env.PORT || 8787);
@@ -110,6 +110,7 @@ function verify(token) {
   if (!token?.includes('.')) return null;
   const [body, sig] = token.split('.');
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) return null;
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   return JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
 }
@@ -146,6 +147,10 @@ app.post('/api/login', async (req, res) => {
   if (user.active === false) return res.status(403).json({ error: 'user_suspended' });
   const token = sign({ userId: user.id, role: user.role, name: user.name, iat: Date.now() });
   res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, app: 'EnterpriseOS', dataDir });
 });
 
 app.post('/api/register', async (req, res) => {

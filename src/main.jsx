@@ -20,7 +20,9 @@ import {
 import './styles.css';
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+const API_BASE =
+  import.meta.env.VITE_API_BASE ??
+  (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:8787' : '');
 
 const modelOptions = [
   {

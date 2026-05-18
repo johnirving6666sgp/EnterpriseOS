@@ -2,7 +2,13 @@
 
 Domain: `timeconnector.net`
 
-## Recommended MVP deployment
+## Recommended trial deployment
+
+For the first online trial with Jamie and Guihua, use a single Node deployment that serves both the React app and API. This keeps login simple because browser requests stay on the same origin.
+
+Point Cloudflare DNS for `timeconnector.net` to the Node host after the service is healthy.
+
+## Split deployment for later hardening
 
 Because EnterpriseOS currently has a React frontend plus an Express backend, the safest MVP deployment is:
 

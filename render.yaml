@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: enterprise-os
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: APP_ORIGINS
+        value: https://enterprise-os.onrender.com,https://timeconnector.net,https://www.timeconnector.net
+      - key: SESSION_SECRET
+        generateValue: true
+    disk:
+      name: enterprise-os-data
+      mountPath: /var/data
+      sizeGB: 1

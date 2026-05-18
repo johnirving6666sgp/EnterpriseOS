@@ -22,6 +22,36 @@ npm start
 
 The production server serves the React app and API from one origin.
 
+## Fast online trial
+
+For Jamie and Guihua to try the product online first, deploy this repository as one Node web service.
+
+Recommended service settings:
+
+```text
+Build command: npm install && npm run build
+Start command: npm start
+Health check path: /api/health
+```
+
+Environment variables:
+
+```text
+NODE_ENV=production
+SESSION_SECRET=<long random string>
+DATA_DIR=/var/data
+APP_ORIGINS=https://enterprise-os.onrender.com,https://timeconnector.net,https://www.timeconnector.net
+```
+
+Trial accounts:
+
+```text
+Jamie:  jamie / jamie-demo
+Guihua: guihua / demo
+```
+
+Change the demo passwords before inviting the wider team.
+
 ## Domain
 
 Cloudflare domain:
@@ -30,7 +60,7 @@ Cloudflare domain:
 timeconnector.net
 ```
 
-Recommended split for MVP:
+Recommended split for later hardening:
 
 - `timeconnector.net`: Cloudflare Pages frontend
 - `api.timeconnector.net`: Express backend on Node server or Mac mini via Cloudflare Tunnel
