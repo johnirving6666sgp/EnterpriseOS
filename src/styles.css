@@ -56,8 +56,14 @@ button:disabled {
 }
 
 .auth-card h1 {
-  margin-bottom: 18px;
+  margin-bottom: 10px;
   font-size: 34px;
+}
+
+.auth-subtitle {
+  margin-bottom: 18px;
+  color: #667085;
+  line-height: 1.45;
 }
 
 .auth-tabs {
@@ -108,6 +114,22 @@ button:disabled {
 
 .auth-status {
   color: #9f1239;
+}
+
+.auth-demo-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.auth-demo-actions button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  color: #344054;
+  background: #eef2f6;
+  font-weight: 850;
 }
 
 .app-top,

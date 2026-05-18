@@ -295,6 +295,10 @@ function EnterpriseApp({ auth, onLogout }) {
     let alive = true;
     apiFetch('/api/state')
       .then((response) => {
+        if (response.status === 401) {
+          onLogout();
+          throw new Error('session_expired');
+        }
         if (!response.ok) throw new Error('state_load_failed');
         return response.json();
       })
@@ -343,7 +347,7 @@ function EnterpriseApp({ auth, onLogout }) {
     return () => {
       alive = false;
     };
-  }, [auth.token]);
+  }, [auth.token, onLogout]);
 
   const sendMessage = () => {
     const text = draft.trim();
@@ -851,17 +855,20 @@ function CoworkerWorkspace({
 
 function AuthScreen({ onAuth }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ userId: 'jamie', name: '', password: 'jamie-demo' });
+  const [form, setForm] = useState({ userId: '', name: '', password: '', inviteCode: '' });
   const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
+    if (busy) return;
     setStatus('正在提交...');
+    setBusy(true);
     const endpoint = mode === 'login' ? '/api/login' : '/api/register';
     const body =
       mode === 'login'
         ? { userId: form.userId.trim().toLowerCase(), password: form.password }
-        : { name: form.name.trim(), userId: form.userId.trim().toLowerCase(), password: form.password };
+        : { name: form.name.trim(), userId: form.userId.trim().toLowerCase(), password: form.password, inviteCode: form.inviteCode.trim() };
 
     try {
       const response = await fetch(`${API_BASE}${endpoint}`, {
@@ -875,8 +882,10 @@ function AuthScreen({ onAuth }) {
     } catch (error) {
       const message = ['Failed to fetch', 'Load failed'].includes(error.message)
         ? '无法连接后端 API，请确认 npm run dev:api 或 npm start 正在运行。'
-        : error.message;
+        : authErrorText(error.message);
       setStatus(`失败：${message}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -885,16 +894,19 @@ function AuthScreen({ onAuth }) {
     setStatus('');
     setForm((current) => ({
       ...current,
-      userId: nextMode === 'login' ? 'jamie' : '',
-      password: nextMode === 'login' ? 'jamie-demo' : ''
+      userId: '',
+      name: '',
+      password: '',
+      inviteCode: ''
     }));
   };
 
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <p className="eyebrow">EnterpriseOS</p>
-        <h1>{mode === 'login' ? '登录你的 Agent 工作台' : '注册新的同事 Agent'}</h1>
+        <p className="eyebrow">EnterpriseOS · 小团队试用</p>
+        <h1>{mode === 'login' ? '进入你的私密 Agent 工作台' : '创建新的同事 Agent'}</h1>
+        <p className="auth-subtitle">账号仅用于当前小团队试用；同事只能进入自己的空间，Jamie 负责权限和模型配置。</p>
         <div className="auth-tabs">
           <button className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>
             登录
@@ -907,32 +919,54 @@ function AuthScreen({ onAuth }) {
           {mode === 'register' && (
             <label>
               姓名
-              <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+              <input autoComplete="name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
             </label>
           )}
           <label>
             用户 ID
-            <input value={form.userId} onChange={(event) => setForm((current) => ({ ...current, userId: event.target.value }))} />
+            <input autoCapitalize="none" autoComplete="username" value={form.userId} onChange={(event) => setForm((current) => ({ ...current, userId: event.target.value }))} />
           </label>
           <label>
             密码
             <input
               type="password"
               value={form.password}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
             />
           </label>
-          <button className="auth-submit" type="submit">
-            {mode === 'login' ? '登录' : '创建账号和 Agent'}
+          {mode === 'register' && (
+            <label>
+              团队邀请码
+              <input value={form.inviteCode} onChange={(event) => setForm((current) => ({ ...current, inviteCode: event.target.value }))} />
+            </label>
+          )}
+          <button className="auth-submit" type="submit" disabled={busy}>
+            {busy ? '处理中...' : mode === 'login' ? '登录' : '创建账号和 Agent'}
           </button>
         </form>
-        <p className="auth-hint">
-          演示账号：Jamie 使用 `jamie / jamie-demo`，其他同事可用 `larry / demo`。
-        </p>
+        <div className="auth-demo-actions">
+          <button onClick={() => setForm((current) => ({ ...current, userId: 'jamie', password: 'jamie-demo' }))}>填入 Jamie 试用账号</button>
+          <button onClick={() => setForm((current) => ({ ...current, userId: 'guihua', password: 'demo' }))}>填入 Guihua 试用账号</button>
+        </div>
+        <p className="auth-hint">注册需要 Jamie 提供的邀请码；密码至少 8 位。</p>
         {status && <div className="auth-status">{status}</div>}
       </section>
     </main>
   );
+}
+
+function authErrorText(code) {
+  const messages = {
+    invalid_credentials: '用户 ID 或密码不正确。',
+    user_suspended: '这个账号已被中止权限，请联系 Jamie。',
+    invalid_invite_code: '团队邀请码不正确。',
+    password_too_short: '密码至少需要 8 位。',
+    user_exists: '这个用户 ID 已存在。',
+    name_userid_password_required: '请填写姓名、用户 ID 和密码。',
+    auth_failed: '认证失败，请稍后再试。'
+  };
+  return messages[code] ?? code;
 }
 
 function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, messagesByUser, runSystemAgent, running, sendInsightBroadcast, totalUsage }) {

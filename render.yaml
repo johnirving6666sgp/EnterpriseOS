@@ -15,6 +15,10 @@ services:
         value: https://enterprise-os.onrender.com,https://timeconnector.net,https://www.timeconnector.net
       - key: SESSION_SECRET
         generateValue: true
+      - key: SESSION_TTL_MS
+        value: 604800000
+      - key: INVITE_CODE
+        generateValue: true
     disk:
       name: enterprise-os-data
       mountPath: /var/data

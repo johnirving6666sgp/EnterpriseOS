@@ -92,6 +92,12 @@ OPENROUTER_APP_NAME=EnterpriseOS
 
 设置后，个人 Agent 对话会由后端调用 OpenRouter 生成真实回复；没有配置 key 时会自动使用本地降级回复。
 
+## Auth
+
+- 登录 token 默认 7 天过期，可用 `SESSION_TTL_MS` 调整。
+- 新注册需要团队邀请码 `INVITE_CODE`。
+- 旧的演示账号首次登录后会自动把明文密码迁移为 scrypt 哈希。
+
 ## 后续最小后端
 
 当前已经加入轻量 Express 后端和文件数据库 `data/store.json`。下一步要替换成正式数据库、真实 LLM API 调用、真实新闻抓取和生产级登录系统。

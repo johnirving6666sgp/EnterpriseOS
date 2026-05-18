@@ -12,6 +12,8 @@ const storePath = path.join(dataDir, 'store.json');
 const publicDir = path.join(rootDir, 'dist');
 const PORT = Number(process.env.PORT || 8787);
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-enterprise-os-secret';
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+const INVITE_CODE = process.env.INVITE_CODE || 'team-test';
 const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || path.join(rootDir, 'vault', 'enterprise-os');
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -118,7 +120,9 @@ function verify(token) {
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
   if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) return null;
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-  return JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  const session = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  if (session.exp && Date.now() > session.exp) return null;
+  return session;
 }
 
 function requireAuth(req, res, next) {
@@ -145,13 +149,36 @@ function recordAudit(store, actor, action, detail) {
   store.auditLog = store.auditLog.slice(0, 500);
 }
 
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('base64url');
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('base64url');
+  return `scrypt:${salt}:${hash}`;
+}
+
+function verifyPassword(user, password) {
+  if (!password) return false;
+  if (user.passwordHash?.startsWith('scrypt:')) {
+    const [, salt, storedHash] = user.passwordHash.split(':');
+    const hash = crypto.scryptSync(String(password), salt, 64);
+    const stored = Buffer.from(storedHash, 'base64url');
+    return stored.length === hash.length && crypto.timingSafeEqual(stored, hash);
+  }
+  return user.password === password;
+}
+
 app.post('/api/login', async (req, res) => {
   const { userId, password } = req.body ?? {};
   const store = await readStore();
   const user = store.users.find((item) => item.id === userId);
-  if (!user || user.password !== password) return res.status(401).json({ error: 'invalid_credentials' });
+  if (!user || !verifyPassword(user, password)) return res.status(401).json({ error: 'invalid_credentials' });
   if (user.active === false) return res.status(403).json({ error: 'user_suspended' });
-  const token = sign({ userId: user.id, role: user.role, name: user.name, iat: Date.now() });
+  if (!user.passwordHash) {
+    user.passwordHash = hashPassword(password);
+    delete user.password;
+    recordAudit(store, user.id, 'password.migrated', { userId: user.id });
+    await writeStore(store);
+  }
+  const token = sign({ userId: user.id, role: user.role, name: user.name, iat: Date.now(), exp: Date.now() + SESSION_TTL_MS });
   res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
 });
 
@@ -160,7 +187,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.post('/api/register', async (req, res) => {
-  const { name, userId, password } = req.body ?? {};
+  const { name, userId, password, inviteCode } = req.body ?? {};
   const cleanId = String(userId || name || '')
     .trim()
     .toLowerCase()
@@ -168,12 +195,14 @@ app.post('/api/register', async (req, res) => {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
   const cleanName = String(name || userId || '').trim();
+  if (inviteCode !== INVITE_CODE) return res.status(403).json({ error: 'invalid_invite_code' });
   if (!cleanId || !cleanName || !password) return res.status(400).json({ error: 'name_userid_password_required' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'password_too_short' });
 
   const store = await readStore();
   if (store.users.some((item) => item.id === cleanId)) return res.status(409).json({ error: 'user_exists' });
 
-  store.users.push({ id: cleanId, name: cleanName, role: 'coworker', password, active: true });
+  store.users.push({ id: cleanId, name: cleanName, role: 'coworker', passwordHash: hashPassword(password), active: true });
   store.agents[cleanId] = {
     id: cleanId,
     name: `${cleanName}_AI`,
@@ -191,7 +220,7 @@ app.post('/api/register', async (req, res) => {
   recordAudit(store, cleanId, 'user.registered', { userId: cleanId });
   await writeStore(store);
 
-  const token = sign({ userId: cleanId, role: 'coworker', name: cleanName, iat: Date.now() });
+  const token = sign({ userId: cleanId, role: 'coworker', name: cleanName, iat: Date.now(), exp: Date.now() + SESSION_TTL_MS });
   res.status(201).json({ token, user: { id: cleanId, name: cleanName, role: 'coworker' } });
 });
 
@@ -312,7 +341,7 @@ app.post('/api/agents/:id/transfer', requireAuth, requireJamie, async (req, res)
   const agent = store.agents[req.params.id];
   if (!agent) return res.status(404).json({ error: 'agent_not_found' });
   const previousOwner = agent.ownerId;
-  store.users.push({ id: newOwnerId, name: newOwnerName, role: 'coworker', password: 'demo', active: true });
+  store.users.push({ id: newOwnerId, name: newOwnerName, role: 'coworker', passwordHash: hashPassword(crypto.randomUUID()), active: true });
   agent.ownerId = newOwnerId;
   agent.active = true;
   agent.transferredFrom = previousOwner;
@@ -663,7 +692,7 @@ function fallbackSystemAgentOutput(id, detail = '') {
 function redactPasswords(store) {
   return {
     ...store,
-    users: store.users.map(({ password, ...user }) => user)
+    users: store.users.map(({ password, passwordHash, ...user }) => user)
   };
 }
 

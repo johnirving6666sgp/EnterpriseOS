@@ -39,6 +39,8 @@ Environment variables:
 ```text
 NODE_ENV=production
 SESSION_SECRET=<long random string>
+SESSION_TTL_MS=604800000
+INVITE_CODE=<team invite code>
 DATA_DIR=/var/data
 APP_ORIGINS=https://enterprise-os.onrender.com,https://timeconnector.net,https://www.timeconnector.net
 OPENROUTER_API_KEY=<your OpenRouter key>
