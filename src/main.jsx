@@ -1537,7 +1537,7 @@ function makeReply(text, coworker, model, savedCards = [], conversationContext =
       '2. 对 Jamie：把全员信息自动汇总成“今日风险、今日商机、待审批知识、模型成本”四个看板。',
       '3. 对组织：内部信息 Agent 不展示原始隐私聊天给其他同事，只抽象出材料专家、设备专家、报价话术这些可复用资产。',
       '4. 对商机：外部机会 Agent 不是简单放新闻，而是按公司能力匹配，提示谁适合跟、怎么开口、需要哪些技术资料。',
-      '5. 对上线试用：先把 Jamie 和 Guihua 的真实工作流跑顺，例如 Guihua 负责材料/客户线索，Jamie 负责广播、模型和权限。'
+      '5. 对全员试用：让 Jamie、Larry、Gu、Xiaodong、Heli、Guihua、Zhiping 都围绕自己的真实工作输入信息，系统再从全员信息流里沉淀商机、任务和专家资产。'
     ].join('\n\n');
   }
   if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(text)) {
