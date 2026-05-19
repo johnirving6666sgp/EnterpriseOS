@@ -298,7 +298,13 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
     llm = generated.llm;
   }
   store.conversations[id] ??= [];
-  store.conversations[id].push({ at: new Date().toISOString(), from: 'user', text: messageForContext, attachments: cleanAttachments });
+  store.conversations[id].push({
+    at: new Date().toISOString(),
+    from: 'user',
+    actorId: req.session.userId,
+    text: messageForContext,
+    attachments: cleanAttachments
+  });
   store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: agentReply });
   const usage = calculateUsage(messageForContext, agentReply, agent.modelTier);
   store.usage[id] = mergeUsage(store.usage[id], usage);

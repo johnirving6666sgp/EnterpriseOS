@@ -98,12 +98,6 @@ const teammates = [
   { id: 'zhiping', name: 'Zhiping', agent: 'Zhiping_AI', model: 'strong', role: '设备选型' }
 ];
 
-const trialAccounts = teammates.map((item) => ({
-  id: item.id,
-  name: item.name,
-  password: item.id === 'jamie' ? 'jamie-demo' : 'demo'
-}));
-
 const recommendedAgentRoutes = {
   jamie: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
   larry: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
@@ -727,6 +721,7 @@ function EnterpriseApp({ auth, onLogout }) {
               Jamie Central
             </button>
           )}
+          <span className="login-chip">当前登录：{auth.user.name}</span>
           <button onClick={onLogout}>退出登录</button>
         </nav>
       </header>
@@ -1136,22 +1131,9 @@ function AuthScreen({ onAuth }) {
             {busy ? '处理中...' : mode === 'login' ? '登录' : '创建账号和 Agent'}
           </button>
         </form>
-        {mode === 'login' && (
-          <div className="auth-demo-area">
-            <strong>全员试用账号</strong>
-            <div className="auth-demo-actions">
-              {trialAccounts.map((account) => (
-                <button
-                  key={account.id}
-                  onClick={() => setForm((current) => ({ ...current, userId: account.id, password: account.password }))}
-                >
-                  {account.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <p className="auth-hint">注册需要 Jamie 提供的邀请码；密码至少 8 位。</p>
+        <p className="auth-hint">
+          {mode === 'login' ? '请使用本人账号登录；试用密码由 Jamie 单独发给各同事。' : '注册需要 Jamie 提供的邀请码；密码至少 8 位。'}
+        </p>
         {status && <div className="auth-status">{status}</div>}
       </section>
     </main>

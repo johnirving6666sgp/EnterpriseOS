@@ -116,32 +116,6 @@ button:disabled {
   color: #9f1239;
 }
 
-.auth-demo-area {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.auth-demo-area strong {
-  color: #344054;
-  font-size: 13px;
-}
-
-.auth-demo-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.auth-demo-actions button {
-  min-height: 36px;
-  border: 0;
-  border-radius: 8px;
-  color: #344054;
-  background: #eef2f6;
-  font-weight: 850;
-}
-
 .app-top,
 .workspace-page,
 .insight-page,
@@ -216,6 +190,18 @@ h2 {
 .top-nav button.active {
   color: #ffffff;
   background: #172033;
+}
+
+.login-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: #344054;
+  background: #eef2f6;
+  font-size: 13px;
+  font-weight: 850;
 }
 
 .panel {
@@ -1144,10 +1130,6 @@ select {
 
   .composer-tool-row {
     grid-template-columns: 1fr;
-  }
-
-  .auth-demo-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .identity-line {
