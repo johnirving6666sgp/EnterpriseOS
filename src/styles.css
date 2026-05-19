@@ -311,23 +311,6 @@ h2 {
   font-weight: 900;
 }
 
-.privacy-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 8px;
-  color: #475467;
-  background: #f9fafb;
-  line-height: 1.45;
-}
-
-.privacy-banner svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: #155e52;
-}
-
 .message-stream {
   display: flex;
   flex-direction: column;
@@ -338,6 +321,44 @@ h2 {
   padding: 12px;
   border-radius: 8px;
   background: #f2f5f8;
+}
+
+.workspace-starter {
+  display: grid;
+  gap: 10px;
+  margin: auto;
+  width: min(100%, 560px);
+  padding: 16px;
+  border: 1px solid #dbe5ef;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.workspace-starter strong {
+  color: #172033;
+  font-size: 18px;
+}
+
+.workspace-starter p {
+  margin: 0;
+  color: #667085;
+  line-height: 1.5;
+}
+
+.starter-prompts {
+  display: grid;
+  gap: 8px;
+}
+
+.starter-prompts button {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-weight: 850;
+  text-align: left;
 }
 
 .message {
