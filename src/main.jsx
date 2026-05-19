@@ -248,7 +248,7 @@ function EnterpriseApp({ auth, onLogout }) {
     )
   );
   const [accessByUser, setAccessByUser] = useState(
-    Object.fromEntries(teammates.map((item) => [item.id, { active: item.id !== 'zhiping', ownerName: item.name }]))
+    Object.fromEntries(teammates.map((item) => [item.id, { active: true, ownerName: item.name }]))
   );
   const recognitionRef = useRef(null);
   const voiceActiveRef = useRef(false);
@@ -1169,7 +1169,7 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
     type: '工作计划',
     title: '本周商机跟进',
     content: '请相关同事根据收藏商机补充客户背景、设备参数和报价风险。',
-    recipients: ['larry', 'gu']
+    recipients: teammates.filter((item) => item.id !== 'jamie').map((item) => item.id)
   });
   const toggleRecipient = (id) => {
     setDraft((current) => ({
