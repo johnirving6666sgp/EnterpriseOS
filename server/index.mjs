@@ -57,6 +57,7 @@ const seed = {
   systemAgentOutputs: { internal: [], external: [] },
   generatedOpportunities: [],
   savedOpportunities: { larry: ['aerospace-valve'] },
+  conversationArchives: {},
   broadcasts: [
     {
       id: 'bc-plan-larry-gu',
@@ -203,7 +204,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, app: 'EnterpriseOS', dataDir });
+  res.json({ ok: true, app: 'EnterpriseOS', dataDir, storePath });
 });
 
 app.post('/api/register', async (req, res) => {
@@ -311,6 +312,17 @@ app.post('/api/agents/:id/conversation/clear', requireAuth, async (req, res) => 
   if (req.session.role !== 'super_admin' && req.session.userId !== id) return res.status(403).json({ error: 'private_workspace' });
   const store = await readStore();
   if (!store.agents[id]) return res.status(404).json({ error: 'agent_not_found' });
+  store.conversationArchives ??= {};
+  store.conversationArchives[id] ??= [];
+  if ((store.conversations[id] ?? []).length) {
+    store.conversationArchives[id].unshift({
+      id: crypto.randomUUID(),
+      at: new Date().toISOString(),
+      clearedBy: req.session.userId,
+      messages: store.conversations[id]
+    });
+    store.conversationArchives[id] = store.conversationArchives[id].slice(0, 10);
+  }
   store.conversations[id] = [];
   recordAudit(store, req.session.userId, 'conversation.cleared', { agentId: id });
   await writeStore(store);

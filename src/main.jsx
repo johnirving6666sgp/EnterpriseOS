@@ -418,6 +418,8 @@ function EnterpriseApp({ auth, onLogout }) {
   const clearConversation = () => {
     if (isThinking) return;
     const id = workspaceId;
+    const ok = window.confirm('确认清空这段对话吗？系统会先归档再清空，但当前页面会立即变为空。');
+    if (!ok) return;
     setMessagesByUser((current) => ({ ...current, [id]: [] }));
     apiFetch(`/api/agents/${id}/conversation/clear`, { method: 'POST' }).catch(() => {});
   };
