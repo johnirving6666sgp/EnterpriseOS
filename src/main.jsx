@@ -643,13 +643,24 @@ function EnterpriseApp({ auth, onLogout }) {
   };
 
   const submitFeedback = (broadcastId, status) => {
+    const detail = typeof status === 'object' ? status : { status };
+    const feedback = {
+      status: detail.status,
+      note: detail.note ?? '',
+      discussWith: detail.discussWith ?? [],
+      at: new Date().toLocaleString()
+    };
     setBroadcasts((current) =>
       current.map((item) =>
         item.id === broadcastId
-          ? { ...item, feedback: { ...item.feedback, [workspaceId]: { status, at: new Date().toLocaleString() } } }
+          ? { ...item, feedback: { ...item.feedback, [workspaceId]: feedback } }
           : item
       )
     );
+    apiFetch(`/api/broadcasts/${broadcastId}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify(feedback)
+    }).catch(() => {});
   };
 
   return (
@@ -691,6 +702,7 @@ function EnterpriseApp({ auth, onLogout }) {
           savedCards={savedCards}
           selectedId={workspaceId}
           isJamie={isJamie}
+          discussionTeammates={teammates}
           visibleTeammates={visibleTeammates}
           setDraft={setDraft}
           setWorkspaceId={setWorkspaceId}
@@ -757,6 +769,7 @@ function CoworkerWorkspace({
   addAttachments,
   attachments,
   coworker,
+  discussionTeammates,
   draft,
   listening,
   messages,
@@ -776,6 +789,35 @@ function CoworkerWorkspace({
   submitFeedback
 }) {
   const uploadInputId = `upload-${selectedId}`;
+  const [discussionDraft, setDiscussionDraft] = useState({ broadcastId: '', discussWith: [], note: '' });
+
+  const toggleDiscussWith = (teammateId) => {
+    setDiscussionDraft((current) => ({
+      ...current,
+      discussWith: current.discussWith.includes(teammateId)
+        ? current.discussWith.filter((id) => id !== teammateId)
+        : [...current.discussWith, teammateId]
+    }));
+  };
+
+  const openDiscussionInvite = (broadcast) => {
+    const fallbackInvitees = broadcast.recipients.filter((id) => id !== selectedId);
+    setDiscussionDraft({
+      broadcastId: broadcast.id,
+      discussWith: fallbackInvitees.length ? fallbackInvitees : [],
+      note: ''
+    });
+  };
+
+  const confirmDiscussionInvite = (broadcastId) => {
+    if (!discussionDraft.discussWith.length) return;
+    submitFeedback(broadcastId, {
+      status: '需要讨论',
+      note: discussionDraft.note,
+      discussWith: discussionDraft.discussWith
+    });
+    setDiscussionDraft({ broadcastId: '', discussWith: [], note: '' });
+  };
 
   return (
     <section className="workspace-page">
@@ -907,12 +949,50 @@ function CoworkerWorkspace({
                     <button
                       key={status}
                       className={item.feedback?.[selectedId]?.status === status ? 'active' : ''}
-                      onClick={() => submitFeedback(item.id, status)}
+                      onClick={() => (status === '需要讨论' ? openDiscussionInvite(item) : submitFeedback(item.id, status))}
                     >
                       {status}
                     </button>
                   ))}
                 </div>
+                {discussionDraft.broadcastId === item.id && (
+                  <div className="discussion-panel">
+                    <strong>邀请谁一起讨论</strong>
+                    <div className="recipient-picker">
+                      {discussionTeammates
+                        .filter((teammate) => teammate.id !== selectedId)
+                        .map((teammate) => (
+                          <button
+                            key={teammate.id}
+                            className={discussionDraft.discussWith.includes(teammate.id) ? 'active' : ''}
+                            onClick={() => toggleDiscussWith(teammate.id)}
+                          >
+                            {teammate.name}
+                          </button>
+                        ))}
+                    </div>
+                    <textarea
+                      value={discussionDraft.note}
+                      onChange={(event) => setDiscussionDraft((current) => ({ ...current, note: event.target.value }))}
+                      placeholder="补一句想讨论的问题，例如：请 Gu 一起确认关键参数。"
+                    />
+                    <div className="discussion-actions">
+                      <button onClick={() => setDiscussionDraft({ broadcastId: '', discussWith: [], note: '' })}>取消</button>
+                      <button className="active" onClick={() => confirmDiscussionInvite(item.id)} disabled={!discussionDraft.discussWith.length}>
+                        发起讨论邀请
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {item.feedback?.[selectedId]?.status === '需要讨论' && item.feedback?.[selectedId]?.discussWith?.length > 0 && (
+                  <p className="discussion-summary">
+                    已邀请{' '}
+                    {item.feedback[selectedId].discussWith
+                      .map((id) => discussionTeammates.find((teammate) => teammate.id === id)?.name ?? id)
+                      .join('、')}
+                    讨论
+                  </p>
+                )}
               </article>
             ))
           ) : (

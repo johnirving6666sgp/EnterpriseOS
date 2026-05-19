@@ -411,7 +411,7 @@ app.post('/api/broadcasts', requireAuth, requireJamie, async (req, res) => {
 });
 
 app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
-  const { status, note = '' } = req.body ?? {};
+  const { status, note = '', discussWith = [] } = req.body ?? {};
   if (!status) return res.status(400).json({ error: 'status_required' });
   const store = await readStore();
   const broadcast = (store.broadcasts ?? []).find((item) => item.id === req.params.id);
@@ -419,9 +419,17 @@ app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
   if (!broadcast.recipients.includes(req.session.userId) && req.session.role !== 'super_admin') {
     return res.status(403).json({ error: 'not_a_recipient' });
   }
+  const allowedDiscussionUsers = new Set(store.users.filter((item) => item.active !== false).map((item) => item.id));
+  const cleanDiscussWith = Array.isArray(discussWith)
+    ? discussWith.filter((id) => allowedDiscussionUsers.has(id) && id !== req.session.userId)
+    : [];
   broadcast.feedback ??= {};
-  broadcast.feedback[req.session.userId] = { status, note, at: new Date().toISOString() };
-  recordAudit(store, req.session.userId, 'broadcast.feedback', { broadcastId: broadcast.id, status });
+  broadcast.feedback[req.session.userId] = { status, note, discussWith: cleanDiscussWith, at: new Date().toISOString() };
+  recordAudit(store, req.session.userId, 'broadcast.feedback', {
+    broadcastId: broadcast.id,
+    status,
+    discussWith: cleanDiscussWith
+  });
   await writeStore(store);
   res.json({ broadcast });
 });

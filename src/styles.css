@@ -441,7 +441,8 @@ h2 {
 }
 
 .feedback-row button,
-.recipient-picker button {
+.recipient-picker button,
+.discussion-actions button {
   min-height: 32px;
   border: 0;
   border-radius: 999px;
@@ -451,9 +452,54 @@ h2 {
 }
 
 .feedback-row button.active,
-.recipient-picker button.active {
+.recipient-picker button.active,
+.discussion-actions button.active {
   color: #ffffff;
   background: #155e52;
+}
+
+.discussion-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #dbe5ef;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.discussion-panel strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.discussion-panel textarea {
+  width: 100%;
+  min-height: 74px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #172033;
+  background: #ffffff;
+  resize: vertical;
+  outline: none;
+}
+
+.discussion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.discussion-actions button:disabled {
+  opacity: 0.55;
+}
+
+.discussion-summary {
+  margin-top: 8px;
+  color: #155e52;
+  font-weight: 850;
 }
 
 .voice-composer {
