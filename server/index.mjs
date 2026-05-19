@@ -350,14 +350,15 @@ app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   store.systemAgentOutputs[id] ??= [];
   store.systemAgentOutputs[id].unshift(generated.output);
   store.systemAgentOutputs[id] = store.systemAgentOutputs[id].slice(0, 12);
-  if (id === 'external' && generated.output.opportunity) {
+  if (generated.output.opportunity) {
     store.generatedOpportunities ??= [];
     store.generatedOpportunities.unshift(generated.output.opportunity);
     store.generatedOpportunities = store.generatedOpportunities.slice(0, 18);
   }
-  recordAudit(store, req.session.userId, 'system-agent.run', { id, llm: generated.llm });
+  const broadcast = createSystemAgentBroadcast(store, req.session.userId, generated.output);
+  recordAudit(store, req.session.userId, 'system-agent.run', { id, llm: generated.llm, broadcastId: broadcast?.id });
   await writeStore(store);
-  res.json({ output: generated.output, llm: generated.llm, systemAgent });
+  res.json({ output: generated.output, llm: generated.llm, systemAgent, broadcast });
 });
 
 app.post('/api/agents/:id/suspend', requireAuth, requireJamie, async (req, res) => {
@@ -676,6 +677,24 @@ async function runSystemAgent({ id, store, systemAgent }) {
       return `## ${ownerId}\n${latest || '暂无对话'}`;
     })
     .join('\n\n');
+  const savedSignals = Object.entries(store.savedOpportunities ?? {})
+    .map(([ownerId, ids]) => `- ${ownerId}: ${(ids ?? []).join(', ') || '暂无收藏'}`)
+    .join('\n');
+  const broadcastSignals = (store.broadcasts ?? [])
+    .slice(0, 12)
+    .map((item) => {
+      const feedback = Object.entries(item.feedback ?? {})
+        .map(([userId, value]) => `${userId}:${value.status}${value.discussWith?.length ? `->讨论(${value.discussWith.join(',')})` : ''}`)
+        .join('; ');
+      const readBy = Object.keys(item.readBy ?? {}).join(',') || 'none';
+      return `- ${item.type} / ${item.title} / recipients=${item.recipients.join(',')} / readBy=${readBy} / feedback=${feedback || 'none'} / ${item.content}`;
+    })
+    .join('\n');
+  const previousSystemLearning = Object.values(store.systemAgentOutputs ?? {})
+    .flat()
+    .slice(0, 10)
+    .map((item) => `- ${item.title}: ${item.learning || item.text || item.opportunity?.why || ''}`)
+    .join('\n');
 
   if (!OPENROUTER_API_KEY) {
     return {
@@ -687,15 +706,19 @@ async function runSystemAgent({ id, store, systemAgent }) {
   const spec =
     id === 'internal'
       ? [
-          '你是内部信息 Agent。你读取小团队试用中的原始对话，但输出必须去除具体隐私字句，只沉淀可复用的协作洞察和专家资产。',
-          '请只返回 JSON：{"title":"...","text":"...","source":"...","asset":"..."}。',
-          'title 要短，text 要能指导 Jamie 下一步如何改进团队协作、材料专家或设备专家能力。'
+          '你是内部信息 Agent，目标不是总结，而是从团队内部信息流中发现“巨大商机线索”。',
+          '你可以读取原始对话、收藏、广播反馈和讨论邀请，但输出必须去除具体隐私字句，只沉淀可复用模式、专家能力和可行动商机。',
+          '重点寻找：客户反复追问、报价卡点、材料/设备能力可复用点、多个同事都碰到的需求、能转化为大客户开发的异常信号。',
+          '请只返回 JSON：{"title":"...","text":"...","source":"...","asset":"...","learning":"...","opportunity":{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"..."},"broadcast":{"title":"...","content":"..."}}。',
+          'broadcast 要写给全员，提醒大家看见同一个巨大商机线索并补充信息。'
         ].join('\n')
       : [
-          '你是外部机会 Agent。你根据小团队方向生成一条值得跟进的商机线索。不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径。',
+          '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
+          '不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径，并说明验证路径。',
           '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
-          '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"..."}。',
-          'title 要像商机卡片标题，action 要说明同事收藏后可以让个人助理怎么深入分析。'
+          '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',
+          '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","learning":"...","broadcast":{"title":"...","content":"..."}}。',
+          'title 要像商机卡片标题，why 要讲清楚为什么可能是大机会，action 要说明同事下一步怎么验证和补充信息。'
         ].join('\n');
 
   try {
@@ -703,7 +726,15 @@ async function runSystemAgent({ id, store, systemAgent }) {
       model,
       messages: [
         { role: 'system', content: spec },
-        { role: 'user', content: `这是当前小团队最近对话摘要：\n\n${compactConversations || '暂无对话。'}` }
+        {
+          role: 'user',
+          content: [
+            `这是当前小团队最近对话摘要：\n\n${compactConversations || '暂无对话。'}`,
+            `\n\n这是各同事收藏过的商机 ID：\n${savedSignals || '暂无收藏。'}`,
+            `\n\n这是近期广播、已读和反馈：\n${broadcastSignals || '暂无广播。'}`,
+            `\n\n这是系统 Agent 过去沉淀的学习记忆：\n${previousSystemLearning || '暂无系统学习。'}`
+          ].join('\n')
+        }
       ],
       temperature: 0.5,
       maxTokens: 900
@@ -741,10 +772,30 @@ function normalizeSystemAgentOutput(id, data, raw) {
       source: data.source || '外部机会 Agent / OpenRouter',
       match: data.match || '材料与设备能力匹配 78%',
       why: data.why || raw.slice(0, 240),
-      action: data.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。'
+      action: data.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。',
+      urgency: data.urgency || '需要 48 小时内验证线索真实性和联系人。'
     };
-    return { id: opportunity.id, at: new Date().toISOString(), title: opportunity.title, opportunity, raw };
+    return {
+      id: opportunity.id,
+      at: new Date().toISOString(),
+      title: opportunity.title,
+      opportunity,
+      learning: data.learning || '外部机会 Agent 已将外部线索与内部材料/设备专家能力进行匹配。',
+      broadcast: normalizeSystemBroadcast(data.broadcast, opportunity),
+      raw
+    };
   }
+  const internalOpportunity = data.opportunity
+    ? {
+        id: `internal-opportunity-${Date.now()}`,
+        title: data.opportunity.title || data.title || '内部信号触发的大商机线索',
+        source: data.opportunity.source || data.source || '内部信息 Agent / 团队对话与反馈',
+        match: data.opportunity.match || '内部需求信号与专家能力匹配 82%',
+        why: data.opportunity.why || data.text || raw.slice(0, 240),
+        action: data.opportunity.action || '广播给全员补充客户、技术参数和验证路径。',
+        urgency: data.opportunity.urgency || '建议本周内完成验证。'
+      }
+    : null;
   return {
     id: `internal-${Date.now()}`,
     at: new Date().toISOString(),
@@ -752,8 +803,19 @@ function normalizeSystemAgentOutput(id, data, raw) {
     text: data.text || raw.slice(0, 320),
     source: data.source || '内部信息 Agent / 最近团队对话',
     asset: data.asset || '小团队试用洞察.md',
+    learning: data.learning || '内部信息 Agent 已从团队对话、反馈和收藏中提炼可复用专家能力。',
+    opportunity: internalOpportunity,
+    broadcast: normalizeSystemBroadcast(data.broadcast, internalOpportunity || data),
     raw
   };
+}
+
+function normalizeSystemBroadcast(broadcast, source) {
+  const title = broadcast?.title || source?.title || '系统 Agent 发现新的商机线索';
+  const content =
+    broadcast?.content ||
+    [source?.why, source?.action, source?.urgency ? `紧急度：${source.urgency}` : ''].filter(Boolean).join('\n');
+  return { type: '商机线索', title, content };
 }
 
 function fallbackSystemAgentOutput(id, detail = '') {
@@ -765,7 +827,13 @@ function fallbackSystemAgentOutput(id, detail = '') {
         source: '外部机会 Agent / 本地降级',
         match: '材料专家与设备专家能力匹配 80%',
         why: `可先围绕高校材料实验室、航空航天材料团队、特种合金小试线寻找材料试制需求。${detail}`,
-        action: '收藏后让个人助理生成客户清单、验证问题和首轮沟通话术。'
+        action: '收藏后让个人助理生成客户清单、验证问题和首轮沟通话术。',
+        urgency: '48 小时内先验证 10 个潜在客户名单。',
+        learning: '外部机会 Agent 通过内部材料/设备能力，优先寻找材料试制切入设备销售的机会。',
+        broadcast: {
+          title: '外部机会 Agent 发现：材料试制可切入悬浮真空熔炼设备客户',
+          content: '请大家补充高校材料实验室、航天材料团队、特种合金小试线等潜在客户线索；收藏后可让个人助理拆客户画像和验证问题。'
+        }
       },
       detail
     );
@@ -776,10 +844,47 @@ function fallbackSystemAgentOutput(id, detail = '') {
       title: '小团队试用洞察：先让 Agent 产出行动',
       text: `当前试用重点应放在真实工作动作：客户跟进、材料试制判断、设备方案和广播反馈。${detail}`,
       source: '内部信息 Agent / 本地降级',
-      asset: '小团队试用洞察.md'
+      asset: '小团队试用洞察.md',
+      learning: '内部信息 Agent 正在学习材料专家、设备专家和客户开发之间的复用关系。',
+      opportunity: {
+        title: '内部信号：报价与设备参数卡点可能指向批量客户开发机会',
+        source: '内部信息 Agent / 团队对话与广播反馈',
+        match: '报价知识卡 + 设备专家能力匹配 84%',
+        why: '多个同事围绕报价风险、设备参数和客户背景补充信息，说明市场开发需要统一的技术销售打法。',
+        action: '广播给全员，请销售、材料、设备同事补齐客户名单、关键参数和采购顾虑。',
+        urgency: '本周内形成第一版客户开发清单。'
+      },
+      broadcast: {
+        title: '内部信息 Agent 发现：报价与设备参数卡点可能变成客户开发机会',
+        content: '请大家补充最近遇到的客户采购顾虑、设备参数卡点和报价风险；系统将沉淀为材料/设备专家共同使用的商机线索。'
+      }
     },
     detail
   );
+}
+
+function createSystemAgentBroadcast(store, actorId, output) {
+  const broadcastSource = output.broadcast || (output.opportunity ? normalizeSystemBroadcast(null, output.opportunity) : null);
+  if (!broadcastSource?.title || !broadcastSource?.content) return null;
+  const recipients = store.users
+    .filter((item) => item.role !== 'super_admin' && item.active !== false)
+    .map((item) => item.id);
+  if (!recipients.length) return null;
+  const broadcast = {
+    id: crypto.randomUUID(),
+    type: broadcastSource.type || '商机线索',
+    title: broadcastSource.title,
+    content: broadcastSource.content,
+    recipients,
+    feedback: {},
+    readBy: {},
+    createdBy: actorId,
+    createdAt: new Date().toISOString(),
+    relatedSystemOutputId: output.id
+  };
+  store.broadcasts ??= [];
+  store.broadcasts.unshift(broadcast);
+  return broadcast;
 }
 
 function redactPasswords(store) {

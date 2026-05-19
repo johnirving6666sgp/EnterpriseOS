@@ -653,8 +653,14 @@ function EnterpriseApp({ auth, onLogout }) {
         return response.json();
       })
       .then((payload) => {
-        if (id === 'external' && payload.output?.opportunity) {
+        if (payload.output?.opportunity) {
           setGeneratedOpportunities((current) => [payload.output.opportunity, ...current]);
+        }
+        if (payload.broadcast) {
+          setBroadcasts((current) => {
+            const exists = current.some((item) => item.id === payload.broadcast.id);
+            return exists ? current : [payload.broadcast, ...current];
+          });
         }
         setSystemOutputs((current) => ({
           ...current,
@@ -1209,6 +1215,15 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
                 <small>{card.source}</small>
                 <h3>💡 {card.title}</h3>
                 <p>{card.text}</p>
+                {card.learning && <p className="learning-note">学习：{card.learning}</p>}
+                {card.opportunity && (
+                  <div className="system-opportunity">
+                    <strong>{card.opportunity.title}</strong>
+                    <span>{card.opportunity.match}</span>
+                    <p>{card.opportunity.why}</p>
+                    <p>{card.opportunity.action}</p>
+                  </div>
+                )}
                 <div className="asset-name">{card.asset}</div>
                 <button
                   className={isPublished ? 'published-button' : 'broadcast-button'}
@@ -1324,6 +1339,8 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
               <small>{card.source}</small>
               <h3>{card.title}</h3>
               <p>{card.why}</p>
+              {card.urgency && <p className="urgency-note">紧急度：{card.urgency}</p>}
+              {card.action && <p className="action-note">{card.action}</p>}
               <div className="match-pill">{card.match}</div>
               <button className={saved ? 'saved-opportunity' : 'save-opportunity'} onClick={() => saveOpportunity(card.id)}>
                 {saved ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}

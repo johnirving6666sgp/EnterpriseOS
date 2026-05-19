@@ -772,6 +772,39 @@ select {
   font-weight: 900;
 }
 
+.learning-note,
+.urgency-note,
+.action-note {
+  padding: 9px;
+  border-radius: 8px;
+  background: #f4f7fb;
+  font-weight: 800;
+}
+
+.urgency-note {
+  color: #9f1239 !important;
+  background: #fff1f2;
+}
+
+.system-opportunity {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #b9e6d2;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.system-opportunity strong {
+  color: #172033;
+}
+
+.system-opportunity span {
+  color: #155e52;
+  font-weight: 900;
+}
+
 .broadcast-button {
   width: 100%;
   color: #ffffff;
