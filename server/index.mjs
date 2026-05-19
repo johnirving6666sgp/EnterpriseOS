@@ -443,13 +443,32 @@ app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
     : [];
   broadcast.feedback ??= {};
   broadcast.feedback[req.session.userId] = { status, note, discussWith: cleanDiscussWith, at: new Date().toISOString() };
+  let discussionBroadcast = null;
+  if (status === '需要讨论' && cleanDiscussWith.length) {
+    const requester = store.users.find((item) => item.id === req.session.userId) ?? { name: req.session.name ?? req.session.userId };
+    discussionBroadcast = {
+      id: crypto.randomUUID(),
+      type: '讨论邀请',
+      title: `${requester.name} 邀请你讨论：${broadcast.title}`,
+      content: [note || '请一起讨论这条内部广播。', `原广播：${broadcast.content}`].join('\n'),
+      recipients: cleanDiscussWith,
+      feedback: {},
+      readBy: {},
+      createdBy: req.session.userId,
+      createdAt: new Date().toISOString(),
+      relatedBroadcastId: broadcast.id
+    };
+    store.broadcasts ??= [];
+    store.broadcasts.unshift(discussionBroadcast);
+  }
   recordAudit(store, req.session.userId, 'broadcast.feedback', {
     broadcastId: broadcast.id,
     status,
-    discussWith: cleanDiscussWith
+    discussWith: cleanDiscussWith,
+    discussionBroadcastId: discussionBroadcast?.id
   });
   await writeStore(store);
-  res.json({ broadcast });
+  res.json({ broadcast, discussionBroadcast });
 });
 
 app.post('/api/llm/proxy', requireAuth, async (req, res) => {

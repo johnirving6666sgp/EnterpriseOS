@@ -682,7 +682,20 @@ function EnterpriseApp({ auth, onLogout }) {
     apiFetch(`/api/broadcasts/${broadcastId}/feedback`, {
       method: 'POST',
       body: JSON.stringify(feedback)
-    }).catch(() => {});
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('feedback_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        setBroadcasts((current) => {
+          const updated = current.map((item) => (item.id === broadcastId && payload.broadcast ? payload.broadcast : item));
+          if (!payload.discussionBroadcast) return updated;
+          const alreadyExists = updated.some((item) => item.id === payload.discussionBroadcast.id);
+          return alreadyExists ? updated : [payload.discussionBroadcast, ...updated];
+        });
+      })
+      .catch(() => {});
   };
 
   return (
