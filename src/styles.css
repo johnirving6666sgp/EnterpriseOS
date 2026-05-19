@@ -331,22 +331,6 @@ h2 {
   line-height: 1.5;
 }
 
-.starter-prompts {
-  display: grid;
-  gap: 8px;
-}
-
-.starter-prompts button {
-  min-height: 38px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  color: #155e52;
-  background: #ecfff4;
-  font-weight: 850;
-  text-align: left;
-}
-
 .message {
   max-width: 84%;
   padding: 10px 12px;

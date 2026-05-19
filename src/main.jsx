@@ -893,7 +893,7 @@ function CoworkerWorkspace({
               </div>
             ))
           ) : (
-            <WorkspaceStarter coworker={coworker} setDraft={setDraft} />
+            <WorkspaceStarter coworker={coworker} />
           )}
         </div>
         <div className="voice-composer">
@@ -1140,19 +1140,12 @@ function AuthScreen({ onAuth }) {
   );
 }
 
-function WorkspaceStarter({ coworker, setDraft }) {
-  const prompts = getWorkspacePrompts(coworker);
+function WorkspaceStarter({ coworker }) {
+  const dailyLine = getWorkspaceDailyLine(coworker);
   return (
     <div className="workspace-starter">
       <strong>{coworker.agent} 已准备好</strong>
-      <p>{coworker.name} 可以直接把现场信息、客户问题、会议纪要、图片或文件交给这个助理处理。</p>
-      <div className="starter-prompts">
-        {prompts.map((prompt) => (
-          <button key={prompt} onClick={() => setDraft(prompt)}>
-            {prompt}
-          </button>
-        ))}
-      </div>
+      <p>{dailyLine}</p>
     </div>
   );
 }
@@ -1508,17 +1501,16 @@ function getTeammateName(id) {
   return teammates.find((item) => item.id === id)?.name ?? id;
 }
 
-function getWorkspacePrompts(coworker) {
-  const promptMap = {
-    jamie: ['汇总今天全员试用的问题和改进建议', '检查哪些广播还没有反馈', '帮我判断系统下一步最该优化什么'],
-    larry: ['帮我把客户现场信息整理成跟进计划', '根据收藏商机写一版报价沟通提纲', '列出这个客户可能关心的设备风险'],
-    gu: ['把这段设备参数讨论沉淀成专家知识卡', '帮我判断这个工艺问题的排查路径', '整理需要 Larry 向客户确认的技术问题'],
-    xiaodong: ['把项目会议纪要拆成任务和负责人', '识别当前项目风险和下一步动作', '帮我给相关同事发讨论邀请'],
-    heli: ['把运营信息整理成今日待办', '识别哪些问题需要广播给同事', '整理客户或供应侧需要补齐的信息'],
-    guihua: ['分析这个材料选型是否适合当前客户', '整理供应风险和替代材料方案', '帮我把客户采购顾虑变成销售话术'],
-    zhiping: ['帮我做复杂设备选型判断', '列出设备方案的关键参数和风险', '把这个设备问题转成专家资产']
-  };
-  return promptMap[coworker.id] ?? ['帮我整理这段工作信息', '生成下一步行动计划', '判断这里面有没有商机线索'];
+function getWorkspaceDailyLine(coworker) {
+  const lines = [
+    '今天把一个真实问题丢给我，我会帮你把它变成下一步行动。',
+    '有客户问题、现场照片或会议纪要，都可以先放进来，我来帮你抓重点。',
+    '今天遇到的小麻烦，可能就是团队下一条有价值的商机线索。',
+    '不用想好怎么问，先把原始信息发给我，我们一起把它整理清楚。',
+    '把今天最占脑子的那件事交给我，我会帮你拆成可执行的步骤。'
+  ];
+  const dayKey = Math.floor(Date.now() / 86400000);
+  return lines[(dayKey + coworker.id.length) % lines.length];
 }
 
 function makeReply(text, coworker, model, savedCards = [], conversationContext = []) {
