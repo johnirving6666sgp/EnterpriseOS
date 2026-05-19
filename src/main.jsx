@@ -645,7 +645,7 @@ function EnterpriseApp({ auth, onLogout }) {
   };
 
   const runSystemAgent = (id) => {
-    if (!isJamie || systemRunning[id]) return;
+    if ((id === 'internal' && !isJamie) || systemRunning[id]) return;
     setSystemRunning((current) => ({ ...current, [id]: true }));
     apiFetch(`/api/system-agents/${id}/run`, { method: 'POST' })
       .then((response) => {

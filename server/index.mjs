@@ -339,8 +339,9 @@ app.post('/api/system-agents/:id/route', requireAuth, requireJamie, async (req, 
   res.json({ systemAgent: store.systemAgents[id] });
 });
 
-app.post('/api/system-agents/:id/run', requireAuth, requireJamie, async (req, res) => {
+app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   const { id } = req.params;
+  if (id === 'internal' && req.session.role !== 'super_admin') return res.status(403).json({ error: 'jamie_only' });
   const store = await readStore();
   const systemAgent = store.systemAgents[id];
   if (!systemAgent) return res.status(404).json({ error: 'system_agent_not_found' });
