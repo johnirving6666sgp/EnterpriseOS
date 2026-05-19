@@ -65,6 +65,7 @@ const seed = {
       content: 'Larry 负责客户场景确认，Gu 补充关键设备参数，明天形成一页报价草案。',
       recipients: ['larry', 'gu'],
       feedback: {},
+      readBy: {},
       createdBy: 'jamie',
       createdAt: new Date().toISOString()
     }
@@ -249,6 +250,21 @@ app.get('/api/state', requireAuth, async (req, res) => {
     return res.json(redactPasswords(store));
   }
   const ownAgent = store.agents[req.session.userId];
+  const userBroadcasts = (store.broadcasts ?? []).filter((item) => item.recipients.includes(req.session.userId));
+  let readChanged = false;
+  for (const broadcast of userBroadcasts) {
+    broadcast.readBy ??= {};
+    if (!broadcast.readBy[req.session.userId]) {
+      broadcast.readBy[req.session.userId] = { at: new Date().toISOString() };
+      readChanged = true;
+    }
+  }
+  if (readChanged) {
+    recordAudit(store, req.session.userId, 'broadcast.read', {
+      broadcastIds: userBroadcasts.map((item) => item.id)
+    });
+    await writeStore(store);
+  }
   res.json({
     users: [{ id: req.session.userId, name: req.session.name, role: req.session.role }],
     agents: { [req.session.userId]: ownAgent },
@@ -256,7 +272,7 @@ app.get('/api/state', requireAuth, async (req, res) => {
     systemAgentOutputs: store.systemAgentOutputs ?? { internal: [], external: [] },
     generatedOpportunities: store.generatedOpportunities ?? [],
     savedOpportunities: { [req.session.userId]: store.savedOpportunities[req.session.userId] ?? [] },
-    broadcasts: (store.broadcasts ?? []).filter((item) => item.recipients.includes(req.session.userId)),
+    broadcasts: userBroadcasts,
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
     systemAgents: store.systemAgents
   });
@@ -400,6 +416,7 @@ app.post('/api/broadcasts', requireAuth, requireJamie, async (req, res) => {
     content,
     recipients: cleanRecipients,
     feedback: {},
+    readBy: {},
     createdBy: req.session.userId,
     createdAt: new Date().toISOString()
   };
@@ -783,7 +800,8 @@ async function writeObsidian(store) {
       const feedback = Object.entries(item.feedback ?? {})
         .map(([userId, value]) => `  - ${userId}: ${value.status}${value.note ? ` (${value.note})` : ''}`)
         .join('\n');
-      return `## ${item.title}\n- type: ${item.type}\n- recipients: ${item.recipients.join(', ')}\n- created: ${item.createdAt}\n\n${item.content}\n\n### Feedback\n${feedback || '- waiting'}\n`;
+      const readBy = Object.keys(item.readBy ?? {}).join(', ') || 'none';
+      return `## ${item.title}\n- type: ${item.type}\n- recipients: ${item.recipients.join(', ')}\n- readBy: ${readBy}\n- created: ${item.createdAt}\n\n${item.content}\n\n### Feedback\n${feedback || '- waiting'}\n`;
     })
     .join('\n');
   await fs.writeFile(path.join(OBSIDIAN_VAULT, 'broadcasts', 'broadcast-log.md'), `# Broadcast Log\n\n${broadcastLines}`);

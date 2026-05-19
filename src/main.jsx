@@ -228,7 +228,8 @@ function EnterpriseApp({ auth, onLogout }) {
       title: '高压阀门报价准备',
       content: 'Larry 负责客户场景确认，Gu 补充关键设备参数，明天形成一页报价草案。',
       recipients: ['larry', 'gu'],
-      feedback: {}
+      feedback: {},
+      readBy: {}
     }
   ]);
   const [modelByUser, setModelByUser] = useState(Object.fromEntries(teammates.map((item) => [item.id, item.model])));
@@ -599,17 +600,38 @@ function EnterpriseApp({ auth, onLogout }) {
   const createBroadcast = ({ type, title, content, recipients }) => {
     const cleanRecipients = recipients.filter(Boolean);
     if (!title.trim() || !content.trim() || !cleanRecipients.length) return;
+    const tempId = `bc-${Date.now()}`;
+    const localBroadcast = {
+      id: tempId,
+      type,
+      title: title.trim(),
+      content: content.trim(),
+      recipients: cleanRecipients,
+      feedback: {},
+      readBy: {}
+    };
     setBroadcasts((current) => [
-      {
-        id: `bc-${Date.now()}`,
-        type,
-        title: title.trim(),
-        content: content.trim(),
-        recipients: cleanRecipients,
-        feedback: {}
-      },
+      localBroadcast,
       ...current
     ]);
+    apiFetch('/api/broadcasts', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: localBroadcast.type,
+        title: localBroadcast.title,
+        content: localBroadcast.content,
+        recipients: localBroadcast.recipients
+      })
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('broadcast_create_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (!payload.broadcast) return;
+        setBroadcasts((current) => current.map((item) => (item.id === tempId ? payload.broadcast : item)));
+      })
+      .catch(() => {});
   };
 
   const sendInsightBroadcast = (card, recipients = teammates.filter((item) => item.id !== 'jamie').map((item) => item.id)) => {
@@ -1229,19 +1251,23 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
           </button>
         </div>
         <div className="feedback-summary">
-          {broadcasts.slice(0, 4).map((item) => (
-            <article key={item.id}>
-              <strong>{item.title}</strong>
-              <span>{item.recipients.length} 位收件人</span>
-              <p>
-                {Object.entries(item.feedback).length
-                  ? Object.entries(item.feedback)
-                      .map(([id, feedback]) => `${id}: ${feedback.status}`)
-                      .join(' · ')
-                  : '等待反馈'}
-              </p>
-            </article>
-          ))}
+          {broadcasts.slice(0, 4).map((item) => {
+            const readIds = Object.keys(item.readBy ?? {}).filter((id) => item.recipients.includes(id));
+            const readNames = readIds.map(getTeammateName).join('、');
+            const feedbackText = Object.entries(item.feedback ?? {}).length
+              ? Object.entries(item.feedback)
+                  .map(([id, feedback]) => `${getTeammateName(id)}: ${feedback.status}`)
+                  .join(' · ')
+              : '等待反馈';
+            return (
+              <article key={item.id}>
+                <strong>{item.title}</strong>
+                <span>{readIds.length}/{item.recipients.length} 已读 · {item.recipients.length} 位收件人</span>
+                <p className="read-receipt">{readNames ? `已读：${readNames}` : '暂未有人读取'}</p>
+                <p>{feedbackText}</p>
+              </article>
+            );
+          })}
         </div>
       </section>
       <section className="expert-row">
@@ -1448,6 +1474,10 @@ function Metric({ label, value }) {
 
 function getModel(id) {
   return modelOptions.find((item) => item.id === id) ?? modelOptions[0];
+}
+
+function getTeammateName(id) {
+  return teammates.find((item) => item.id === id)?.name ?? id;
 }
 
 function makeReply(text, coworker, model, savedCards = [], conversationContext = []) {
