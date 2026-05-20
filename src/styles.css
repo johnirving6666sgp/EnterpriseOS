@@ -403,6 +403,26 @@ h2 {
   gap: 8px;
 }
 
+.business-shortcuts {
+  display: grid;
+  gap: 8px;
+}
+
+.business-shortcuts div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.business-shortcuts button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  color: #344054;
+  background: #eef2f6;
+  font-weight: 850;
+}
+
 .broadcast-item {
   padding: 10px;
   border-radius: 8px;
@@ -1073,6 +1093,204 @@ select {
   gap: 8px;
 }
 
+.business-page {
+  display: grid;
+  gap: 16px;
+}
+
+.business-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.business-heading p,
+.customer-head span,
+.customer-card p {
+  margin: 0;
+  color: #667085;
+}
+
+.compact-button {
+  width: auto;
+  padding: 0 14px;
+}
+
+.task-board,
+.customer-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.task-column {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-height: 360px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f2f5f8;
+}
+
+.task-column-head {
+  display: flex;
+  justify-content: space-between;
+  color: #172033;
+}
+
+.task-column-head span,
+.task-meta span,
+.stage-pill,
+.priority {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #344054;
+  background: #eef2f6;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.task-card,
+.customer-card,
+.quote-form-panel,
+.quote-ai-panel,
+.activity-panel {
+  padding: 14px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.task-card h3,
+.customer-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.task-meta,
+.customer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.priority {
+  display: inline-flex;
+  margin-top: 10px;
+}
+
+.priority.high,
+.danger-text {
+  color: #9f1239 !important;
+}
+
+.priority.medium {
+  color: #a15c07;
+}
+
+.priority.low {
+  color: #155e52;
+}
+
+.customer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.customer-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #155e52;
+  font-weight: 900;
+}
+
+.customer-actions button,
+.quote-ai-panel button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  color: #344054;
+  background: #eef2f6;
+  font-weight: 850;
+}
+
+.quote-layout,
+.broadcast-center-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+}
+
+.quote-form-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quote-line {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.quote-total {
+  grid-column: 1 / -1;
+  padding: 12px;
+  border-radius: 8px;
+  text-align: right;
+  color: #172033;
+  background: #f8fafc;
+}
+
+.quote-total strong {
+  color: #155e52;
+  font-size: 20px;
+}
+
+.quote-ai-panel,
+.activity-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.activity-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.activity-row div {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f6;
+}
+
+.activity-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #155e52;
+}
+
 @media (max-width: 980px) {
   .app-top,
   .workspace-page {
@@ -1089,7 +1307,11 @@ select {
   .expert-row,
   .system-agent-grid,
   .broadcast-form,
-  .feedback-summary {
+  .feedback-summary,
+  .task-board,
+  .customer-grid,
+  .quote-layout,
+  .broadcast-center-grid {
     grid-template-columns: 1fr;
   }
 }

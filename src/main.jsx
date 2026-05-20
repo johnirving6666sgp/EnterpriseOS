@@ -6,14 +6,18 @@ import {
   BookmarkCheck,
   Brain,
   ChartNoAxesColumnIncreasing,
+  ClipboardList,
   CircleDollarSign,
   Cpu,
+  FileText,
   Layers3,
   Mic,
   Newspaper,
   Paperclip,
+  Radio,
   Send,
   Sparkles,
+  Users,
   UserCheck,
   UserRound
 } from 'lucide-react';
@@ -182,6 +186,46 @@ const insightCards = [
 const expertTracks = [
   { name: '材料专家', level: 48, note: '学习材料选型、替代方案、价格波动和供应风险。' },
   { name: '设备专家', level: 56, note: '学习设备参数、阀门选型、维护约束和报价触发点。' }
+];
+
+const taskColumns = [
+  {
+    id: 'todo',
+    title: '待办',
+    items: [
+      { title: '联系华东有色金属研究院，确认设备升级预算', tag: '客户跟进', owner: 'Luyang', due: '5 天后', priority: 'high' },
+      { title: '整理 4 代核电阀门参数文档', tag: '专家资产', owner: 'Gu', due: '已逾期', priority: 'high' },
+      { title: '对比 3 家真空熔炼设备供应商报价', tag: '设备选型', owner: 'Kingsong', due: '2 天后', priority: 'medium' }
+    ]
+  },
+  {
+    id: 'progress',
+    title: '进行中',
+    items: [
+      { title: '生成某航天厂高压阀门报价方案', tag: '报价方案', owner: 'Jamie', due: '今天', priority: 'high' },
+      { title: '耐腐蚀合金材料价格走势分析', tag: '市场分析', owner: 'Guihua', due: '1 天后', priority: 'medium' }
+    ]
+  },
+  {
+    id: 'review',
+    title: '待审核',
+    items: [{ title: 'Gu 提交的阀门专家资产文档', tag: '专家资产', owner: 'Gu', due: '1 天后', priority: 'medium' }]
+  },
+  {
+    id: 'done',
+    title: '已完成',
+    items: [
+      { title: '某航天厂需求初筛判断', tag: '商机跟进', owner: 'Larry', due: '已完成', priority: 'low' },
+      { title: '全网行业线索汇总报告', tag: '市场信息', owner: 'Xiaodong', due: '已完成', priority: 'low' }
+    ]
+  }
+];
+
+const customerSeed = [
+  { name: '华东有色金属研究院', type: '科研机构', stage: '洽谈中', contact: '张主任', phone: '138****8888', last: '5 天前' },
+  { name: '上海航天设备制造', type: '航天军工', stage: '报价阶段', contact: '李工', phone: '139****6666', last: '今天' },
+  { name: '广州高校材料实验室', type: '高校科研', stage: '商务谈判', contact: '王教授', phone: '137****5555', last: '2 天前' },
+  { name: '北京半导体材料公司', type: '半导体', stage: '成交', contact: '赵经理', phone: '136****4444', last: '1 周前' }
 ];
 
 function App() {
@@ -716,11 +760,23 @@ function EnterpriseApp({ auth, onLogout }) {
           <button className={visiblePage === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
             同事桌面
           </button>
+          <button className={visiblePage === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>
+            任务看板
+          </button>
+          <button className={visiblePage === 'crm' ? 'active' : ''} onClick={() => setPage('crm')}>
+            客户管理
+          </button>
+          <button className={visiblePage === 'quote' ? 'active' : ''} onClick={() => setPage('quote')}>
+            报价方案
+          </button>
           <button className={visiblePage === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
             内部信息仓
           </button>
           <button className={visiblePage === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
             商机雷达
+          </button>
+          <button className={visiblePage === 'broadcast' ? 'active' : ''} onClick={() => setPage('broadcast')}>
+            广播中心
           </button>
           {isJamie && (
             <button className={visiblePage === 'commander' ? 'active' : ''} onClick={() => setPage('commander')}>
@@ -748,6 +804,7 @@ function EnterpriseApp({ auth, onLogout }) {
           discussionTeammates={teammates}
           visibleTeammates={visibleTeammates}
           setDraft={setDraft}
+          setPage={setPage}
           setWorkspaceId={setWorkspaceId}
           startVoice={startVoice}
           stopVoice={stopVoice}
@@ -772,6 +829,16 @@ function EnterpriseApp({ auth, onLogout }) {
           runSystemAgent={runSystemAgent}
           running={systemRunning.internal}
         />
+      )}
+
+      {visiblePage === 'tasks' && <TaskBoard />}
+
+      {visiblePage === 'crm' && <CustomerManager />}
+
+      {visiblePage === 'quote' && <QuoteBuilder setPage={setPage} />}
+
+      {visiblePage === 'broadcast' && (
+        <BroadcastCenter broadcasts={broadcasts} createBroadcast={createBroadcast} totalUsage={totalUsage} />
       )}
 
       {visiblePage === 'opportunity' && (
@@ -823,6 +890,7 @@ function CoworkerWorkspace({
   isJamie,
   visibleTeammates,
   setDraft,
+  setPage,
   setWorkspaceId,
   startVoice,
   stopVoice,
@@ -976,6 +1044,17 @@ function CoworkerWorkspace({
           ) : (
             <p>从外部商机雷达收藏后，会吸附到这里。</p>
           )}
+        </div>
+        <div className="business-shortcuts">
+          <strong>业务工作台</strong>
+          <div>
+            <button onClick={() => setWorkspaceId(selectedId)} disabled>
+              当前助理
+            </button>
+            <button onClick={() => setPage('tasks')}>任务</button>
+            <button onClick={() => setPage('crm')}>客户</button>
+            <button onClick={() => setPage('quote')}>报价</button>
+          </div>
         </div>
         <div className="broadcast-inbox">
           <strong>内部广播</strong>
@@ -1316,6 +1395,219 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   );
 }
 
+function TaskBoard() {
+  return (
+    <section className="business-page">
+      <div className="business-heading">
+        <div>
+          <h2>任务看板</h2>
+          <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。</p>
+        </div>
+        <button className="broadcast-button compact-button">
+          <ClipboardList size={17} />
+          新建任务
+        </button>
+      </div>
+      <div className="task-board">
+        {taskColumns.map((column) => (
+          <section className="task-column" key={column.id}>
+            <div className="task-column-head">
+              <strong>{column.title}</strong>
+              <span>{column.items.length}</span>
+            </div>
+            {column.items.map((task) => (
+              <article className="task-card" key={task.title}>
+                <h3>{task.title}</h3>
+                <div className="task-meta">
+                  <span>{task.tag}</span>
+                  <span>{task.owner}</span>
+                  <span className={task.due === '已逾期' ? 'danger-text' : ''}>{task.due}</span>
+                </div>
+                <div className={`priority ${task.priority}`}>{priorityLabel(task.priority)}</div>
+              </article>
+            ))}
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CustomerManager() {
+  return (
+    <section className="business-page">
+      <div className="business-heading">
+        <div>
+          <h2>客户管理</h2>
+          <p>把客户、联系人、阶段、上次跟进和报价入口集中管理。</p>
+        </div>
+        <button className="broadcast-button compact-button">
+          <Users size={17} />
+          添加客户
+        </button>
+      </div>
+      <div className="customer-grid">
+        {customerSeed.map((customer) => (
+          <article className="customer-card" key={customer.name}>
+            <div className="customer-head">
+              <div className="customer-avatar">{customer.name[0]}</div>
+              <div>
+                <h3>{customer.name}</h3>
+                <span>{customer.type}</span>
+              </div>
+            </div>
+            <div className="stage-pill">{customer.stage}</div>
+            <p>联系人：{customer.contact} · {customer.phone}</p>
+            <p>上次联系：{customer.last}</p>
+            <div className="customer-actions">
+              <button>跟进</button>
+              <button>报价</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function QuoteBuilder({ setPage }) {
+  return (
+    <section className="business-page">
+      <div className="business-heading">
+        <div>
+          <h2>报价方案</h2>
+          <p>把客户需求、设备参数和历史报价组合成可发送方案。</p>
+        </div>
+        <button className="broadcast-button compact-button">
+          <FileText size={17} />
+          保存报价
+        </button>
+      </div>
+      <div className="quote-layout">
+        <section className="quote-form-panel">
+          <label>
+            客户名称
+            <select defaultValue="上海航天设备制造">
+              {customerSeed.map((customer) => (
+                <option key={customer.name}>{customer.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            报价编号
+            <input defaultValue="BQ-2026-001" />
+          </label>
+          <label className="wide-field">
+            项目描述
+            <input defaultValue="高压阀门设备选型与供应方案" />
+          </label>
+          <div className="quote-line">
+            <span>高压截止阀 DN50</span>
+            <span>J41H-16C</span>
+            <span>2 件</span>
+            <strong>¥25,600</strong>
+          </div>
+          <div className="quote-line">
+            <span>高压安全阀</span>
+            <span>A42Y-16C</span>
+            <span>1 件</span>
+            <strong>¥8,600</strong>
+          </div>
+          <div className="quote-total">合计金额：<strong>¥34,200</strong></div>
+        </section>
+        <aside className="quote-ai-panel">
+          <strong>AI 报价助手</strong>
+          <p>利润率约 32%，价格竞争力良好；建议补充交付周期、质保范围和关键材料说明。</p>
+          <p>推荐话术：基于贵方航天级高压阀门需求，我们建议采用成熟型号并预留参数确认窗口。</p>
+          <button onClick={() => setPage('broadcast')}>广播给相关同事审核</button>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function BroadcastCenter({ broadcasts, createBroadcast, totalUsage }) {
+  const [draft, setDraft] = useState({
+    type: '工作计划',
+    title: '本周重点跟进',
+    content: '请各位同步客户进展、报价风险和需要协助的事项。',
+    recipients: teammates.filter((item) => item.id !== 'jamie').map((item) => item.id)
+  });
+  return (
+    <section className="business-page">
+      <div className="business-heading">
+        <div>
+          <h2>广播中心</h2>
+          <p>发布工作计划、商机线索和讨论邀请，并查看已读与反馈。</p>
+        </div>
+        <button className="broadcast-button compact-button" onClick={() => createBroadcast(draft)}>
+          <Radio size={17} />
+          发布广播
+        </button>
+      </div>
+      <div className="broadcast-center-grid">
+        <section className="quote-form-panel">
+          <label>
+            类型
+            <select value={draft.type} onChange={(event) => setDraft((current) => ({ ...current, type: event.target.value }))}>
+              <option>工作计划</option>
+              <option>商机线索</option>
+              <option>专家资产</option>
+            </select>
+          </label>
+          <label>
+            标题
+            <input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
+          </label>
+          <label className="wide-field">
+            内容
+            <input value={draft.content} onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))} />
+          </label>
+          <div className="recipient-picker wide-field">
+            {teammates
+              .filter((item) => item.id !== 'jamie')
+              .map((item) => (
+                <button
+                  key={item.id}
+                  className={draft.recipients.includes(item.id) ? 'active' : ''}
+                  onClick={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      recipients: current.recipients.includes(item.id)
+                        ? current.recipients.filter((id) => id !== item.id)
+                        : [...current.recipients, item.id]
+                    }))
+                  }
+                >
+                  {item.name}
+                </button>
+              ))}
+          </div>
+        </section>
+        <aside className="activity-panel">
+          <strong>团队活跃度</strong>
+          <p>本次试用已累计 Token：{totalUsage.input + totalUsage.output}</p>
+          {teammates.slice(0, 6).map((item, index) => (
+            <div className="activity-row" key={item.id}>
+              <span>{item.name}</span>
+              <div><i style={{ width: `${95 - index * 8}%` }} /></div>
+            </div>
+          ))}
+        </aside>
+      </div>
+      <div className="feedback-summary">
+        {broadcasts.slice(0, 6).map((item) => (
+          <article key={item.id}>
+            <strong>{item.title}</strong>
+            <span>{Object.keys(item.readBy ?? {}).length}/{item.recipients.length} 已读</span>
+            <p>{item.content}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running }) {
   return (
     <section className="opportunity-page">
@@ -1505,6 +1797,10 @@ function getModel(id) {
 
 function getTeammateName(id) {
   return teammates.find((item) => item.id === id)?.name ?? id;
+}
+
+function priorityLabel(priority) {
+  return ({ high: '高优先级', medium: '中优先级', low: '低优先级' })[priority] ?? '普通';
 }
 
 function getWorkspaceDailyLine(coworker) {
