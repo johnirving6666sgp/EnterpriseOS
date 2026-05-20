@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PDFParse } from 'pdf-parse';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -98,7 +99,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '12mb' }));
 
 async function ensureStore() {
   await fs.mkdir(dataDir, { recursive: true });
@@ -344,7 +345,7 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   const agent = store.agents[id];
   if (!agent?.active) return res.status(403).json({ error: 'agent_suspended' });
   const user = store.users.find((item) => item.id === id) ?? { id, name: id, role: 'coworker' };
-  const cleanAttachments = normalizeAttachments(attachments);
+  const cleanAttachments = await normalizeAttachments(attachments);
   const messageForContext = formatMessageWithAttachments(message, cleanAttachments);
   let agentReply = reply;
   let llm = { provider: 'fallback', simulated: true };
@@ -607,25 +608,100 @@ function calculateUsage(inputText, outputText, modelTier) {
   };
 }
 
-function normalizeAttachments(attachments = []) {
+async function normalizeAttachments(attachments = []) {
   if (!Array.isArray(attachments)) return [];
-  return attachments
-    .slice(0, 8)
-    .map((file) =>
-      compact({
+  const cleanFiles = await Promise.all(
+    attachments.slice(0, 8).map(async (file) => {
+      const normalized = compact({
         id: String(file.id ?? ''),
         name: String(file.name ?? '').slice(0, 160),
-        type: String(file.type ?? '未知类型').slice(0, 120),
+        type: String(file.type ?? inferAttachmentType(file.name)).slice(0, 120),
         size: Number.isFinite(Number(file.size)) ? Number(file.size) : 0
-      })
-    )
-    .filter((file) => file.name);
+      });
+      if (!normalized.name) return null;
+
+      const extractedText = await extractAttachmentText(file, normalized);
+      return compact({
+        ...normalized,
+        extractedText: extractedText ? truncateText(extractedText, 12000) : '',
+        parseNote: extractedText ? '' : String(file.parseNote ?? '未能读取附件正文').slice(0, 160)
+      });
+    })
+  );
+  return cleanFiles.filter(Boolean);
 }
 
 function formatMessageWithAttachments(message, attachments = []) {
   if (!attachments.length) return message;
-  const fileLines = attachments.map((file) => `- ${file.name}（${file.type}，${formatFileSize(file.size)}）`).join('\n');
+  const fileLines = attachments
+    .map((file) => {
+      const summary = `- ${file.name}（${file.type}，${formatFileSize(file.size)}）`;
+      if (!file.extractedText) return `${summary}\n  解析状态：${file.parseNote ?? '未能读取附件正文'}`;
+      return `${summary}\n  附件正文摘录：\n${indentText(file.extractedText)}`;
+    })
+    .join('\n');
   return `${message}\n\n[上传附件]\n${fileLines}`;
+}
+
+async function extractAttachmentText(file, normalized) {
+  const dataUrl = typeof file.dataUrl === 'string' ? file.dataUrl : '';
+  if (!dataUrl) return '';
+  try {
+    const { buffer, mime } = dataUrlToBuffer(dataUrl);
+    const type = normalized.type || mime || '';
+    const name = normalized.name.toLowerCase();
+    if (type.includes('pdf') || name.endsWith('.pdf')) {
+      const parser = new PDFParse({ data: buffer });
+      try {
+        const parsed = await parser.getText();
+        return normalizeExtractedText(parsed.text ?? '');
+      } finally {
+        await parser.destroy();
+      }
+    }
+    if (type.startsWith('text/') || /\.(txt|md|csv)$/i.test(name)) {
+      return normalizeExtractedText(buffer.toString('utf8'));
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+function dataUrlToBuffer(dataUrl) {
+  const match = /^data:([^;,]+)?;base64,(.*)$/s.exec(dataUrl);
+  if (!match) return { mime: '', buffer: Buffer.alloc(0) };
+  return { mime: match[1] ?? '', buffer: Buffer.from(match[2], 'base64') };
+}
+
+function inferAttachmentType(name = '') {
+  const lower = String(name).toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.md')) return 'text/markdown';
+  if (lower.endsWith('.csv')) return 'text/csv';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  return '未知类型';
+}
+
+function normalizeExtractedText(text) {
+  return String(text)
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function truncateText(text, maxLength) {
+  const clean = String(text ?? '');
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, maxLength)}\n...（内容较长，已截取前 ${maxLength} 字供本轮分析）`;
+}
+
+function indentText(text) {
+  return String(text)
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n');
 }
 
 function formatFileSize(size = 0) {

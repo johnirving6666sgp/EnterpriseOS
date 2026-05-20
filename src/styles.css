@@ -602,6 +602,13 @@ h2 {
   font-weight: 750;
 }
 
+.attachment-chip em {
+  color: #667085;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
 .attachment-chip button {
   width: 20px;
   height: 20px;

@@ -257,6 +257,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState([]);
+  const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [thinkingByUser, setThinkingByUser] = useState({});
   const [listening, setListening] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
@@ -403,18 +404,19 @@ function EnterpriseApp({ auth, onLogout }) {
 
   const sendMessage = () => {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || !access.active || isThinking) return;
+    if ((!text && attachments.length === 0) || !access.active || isThinking || attachmentLoading) return;
     const id = workspaceId;
     const attachedFiles = attachments;
     const messageText = text || '请分析我上传的附件。';
     const displayText = formatMessageWithAttachments(messageText, attachedFiles);
+    const displayAttachments = attachedFiles.map(stripAttachmentPayload);
     const thinkingId = `thinking-${Date.now()}`;
     setThinkingByUser((current) => ({ ...current, [id]: true }));
     setMessagesByUser((current) => ({
       ...current,
       [id]: [
         ...(current[id] ?? []),
-        { from: 'user', text: displayText, attachments: attachedFiles },
+        { from: 'user', text: displayText, attachments: displayAttachments },
         { id: thinkingId, from: 'agent', text: '思考中...', thinking: true }
       ]
     }));
@@ -476,15 +478,40 @@ function EnterpriseApp({ auth, onLogout }) {
     recordUsage(id, userText, agentText);
   };
 
-  const addAttachments = (files) => {
-    const incoming = Array.from(files ?? []).slice(0, 8).map((file, index) => ({
-      id: `${file.name}-${file.size}-${Date.now()}-${index}`,
-      name: file.name,
-      size: file.size,
-      type: file.type || '未知类型'
-    }));
-    if (!incoming.length) return;
-    setAttachments((current) => [...current, ...incoming].slice(0, 8));
+  const addAttachments = async (files) => {
+    const selectedFiles = Array.from(files ?? []).slice(0, 8);
+    if (!selectedFiles.length) return;
+    setAttachmentLoading(true);
+    try {
+      const incoming = await Promise.all(
+        selectedFiles.map(async (file, index) => {
+          const type = file.type || inferFileType(file.name);
+          const base = {
+            id: `${file.name}-${file.size}-${Date.now()}-${index}`,
+            name: file.name,
+            size: file.size,
+            type
+          };
+          if (!canEmbedFile(file, type)) {
+            return {
+              ...base,
+              parseNote:
+                file.size > MAX_EMBEDDED_ATTACHMENT_BYTES
+                  ? '文件超过 2MB，本轮只发送文件名；请拆小后再上传。'
+                  : '当前先支持 PDF/TXT/MD/CSV 正文解析；图片会作为附件记录。'
+            };
+          }
+          try {
+            return { ...base, dataUrl: await readFileAsDataUrl(file) };
+          } catch {
+            return { ...base, parseNote: '浏览器未能读取该附件正文。' };
+          }
+        })
+      );
+      setAttachments((current) => [...current, ...incoming].slice(0, 8));
+    } finally {
+      setAttachmentLoading(false);
+    }
   };
 
   const removeAttachment = (fileId) => {
@@ -812,6 +839,7 @@ function EnterpriseApp({ auth, onLogout }) {
           clearConversation={clearConversation}
           analyzeSaved={analyzeSaved}
           addAttachments={addAttachments}
+          attachmentLoading={attachmentLoading}
           removeAttachment={removeAttachment}
           submitFeedback={submitFeedback}
         />
@@ -877,6 +905,7 @@ function CoworkerWorkspace({
   access,
   analyzeSaved,
   addAttachments,
+  attachmentLoading,
   attachments,
   coworker,
   discussionTeammates,
@@ -974,14 +1003,20 @@ function CoworkerWorkspace({
           <div className="composer-input-row">
             <input
               value={draft}
-              disabled={!access.active || isThinking}
+              disabled={!access.active || isThinking || attachmentLoading}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') sendMessage();
               }}
-              placeholder={isThinking ? 'Agent 正在思考中...' : '说出现场信息、客户问题或报价想法...'}
+              placeholder={
+                attachmentLoading
+                  ? '附件读取中...'
+                  : isThinking
+                    ? 'Agent 正在思考中...'
+                    : '说出现场信息、客户问题或报价想法...'
+              }
             />
-            <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking}>
+            <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking || attachmentLoading}>
               <Send size={18} />
             </button>
           </div>
@@ -991,6 +1026,7 @@ function CoworkerWorkspace({
                 <span className="attachment-chip" key={file.id}>
                   <Paperclip size={14} />
                   {file.name}
+                  {file.dataUrl ? <em>已读取</em> : file.parseNote ? <em>仅记录</em> : null}
                   <button type="button" onClick={() => removeAttachment(file.id)} aria-label={`移除 ${file.name}`}>
                     ×
                   </button>
@@ -1010,20 +1046,20 @@ function CoworkerWorkspace({
               }}
               onTouchEnd={stopVoice}
               onTouchCancel={stopVoice}
-              disabled={!access.active || isThinking}
+              disabled={!access.active || isThinking || attachmentLoading}
             >
               <Mic size={20} />
               {listening ? '松开结束' : '按住说话'}
             </button>
-            <label className={`upload-button ${!access.active || isThinking ? 'disabled' : ''}`} htmlFor={uploadInputId}>
+            <label className={`upload-button ${!access.active || isThinking || attachmentLoading ? 'disabled' : ''}`} htmlFor={uploadInputId}>
               <Paperclip size={18} />
-              上传文件/图片
+              {attachmentLoading ? '附件读取中' : '上传文件/图片'}
               <input
                 id={uploadInputId}
                 type="file"
                 multiple
                 accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md"
-                disabled={!access.active || isThinking}
+                disabled={!access.active || isThinking || attachmentLoading}
                 onChange={(event) => {
                   addAttachments(event.target.files);
                   event.target.value = '';
@@ -1872,6 +1908,39 @@ function formatMessageWithAttachments(text, attachments = []) {
   if (!attachments.length) return text;
   const files = attachments.map((file) => `- ${file.name}（${file.type}，${formatFileSize(file.size)}）`).join('\n');
   return `${text}\n\n[上传附件]\n${files}`;
+}
+
+const MAX_EMBEDDED_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+
+function canEmbedFile(file, type = '') {
+  const name = file.name.toLowerCase();
+  return (
+    file.size <= MAX_EMBEDDED_ATTACHMENT_BYTES &&
+    (type.includes('pdf') || type.startsWith('text/') || /\.(txt|md|csv)$/i.test(name))
+  );
+}
+
+function inferFileType(name = '') {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.md')) return 'text/markdown';
+  if (lower.endsWith('.csv')) return 'text/csv';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  return '未知类型';
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function stripAttachmentPayload(file) {
+  const { dataUrl, ...rest } = file;
+  return rest;
 }
 
 function formatFileSize(size = 0) {
