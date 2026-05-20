@@ -95,7 +95,9 @@ const teammates = [
   { id: 'xiaodong', name: 'Xiaodong', agent: 'Xiaodong_AI', model: 'balanced', role: '项目协作' },
   { id: 'heli', name: 'Heli', agent: 'Heli_AI', model: 'lite', role: '运营支持' },
   { id: 'guihua', name: 'Guihua', agent: 'Guihua_AI', model: 'lite', role: '材料与供应' },
-  { id: 'zhiping', name: 'Zhiping', agent: 'Zhiping_AI', model: 'strong', role: '设备选型' }
+  { id: 'zhiping', name: 'Zhiping', agent: 'Zhiping_AI', model: 'strong', role: '设备选型' },
+  { id: 'luyang', name: 'Luyang', agent: 'Luyang_AI', model: 'balanced', role: '客户与项目协作' },
+  { id: 'kingsong', name: 'Kingsong', agent: 'Kingsong_AI', model: 'balanced', role: '设备与供应协作' }
 ];
 
 const recommendedAgentRoutes = {
@@ -105,7 +107,9 @@ const recommendedAgentRoutes = {
   xiaodong: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   heli: { modelTier: 'lite', provider: 'openrouter', apiModel: 'openrouter/anthropic/claude-3.5-haiku' },
   guihua: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-  zhiping: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' }
+  zhiping: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
+  luyang: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  kingsong: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
 };
 
 const recommendedSystemRoutes = {
@@ -126,7 +130,9 @@ const baseMessages = {
   xiaodong: [{ from: 'agent', text: '我会帮你把项目过程里的风险和机会变成可执行动作。' }],
   heli: [{ from: 'agent', text: '我会整理运营侧信息，并把共性问题送入内部信息 Agent。' }],
   guihua: [{ from: 'agent', text: '我会沉淀材料选型、供应信息和客户采购顾虑。' }],
-  zhiping: [{ from: 'agent', text: '我会用强模型帮你处理复杂设备选型和专家级判断。' }]
+  zhiping: [{ from: 'agent', text: '我会用强模型帮你处理复杂设备选型和专家级判断。' }],
+  luyang: [{ from: 'agent', text: '我会帮你把客户需求、项目协作和跟进动作整理清楚。' }],
+  kingsong: [{ from: 'agent', text: '我会帮你沉淀设备、供应和项目交付中的关键信息。' }]
 };
 
 const opportunitySeed = [
@@ -1182,7 +1188,7 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   return (
     <section className="insight-page">
       <div className="funnel-row">
-        <Metric label="助理 Agent" value="7" />
+        <Metric label="助理 Agent" value={String(teammates.length)} />
         <Metric label="原始对话事件" value={eventCount} />
         <Metric label="今日 Token" value={totalUsage.input + totalUsage.output} />
         <Metric label="专家资产" value="2" />
@@ -1537,7 +1543,7 @@ function makeReply(text, coworker, model, savedCards = [], conversationContext =
       '2. 对 Jamie：把全员信息自动汇总成“今日风险、今日商机、待审批知识、模型成本”四个看板。',
       '3. 对组织：内部信息 Agent 不展示原始隐私聊天给其他同事，只抽象出材料专家、设备专家、报价话术这些可复用资产。',
       '4. 对商机：外部机会 Agent 不是简单放新闻，而是按公司能力匹配，提示谁适合跟、怎么开口、需要哪些技术资料。',
-      '5. 对全员试用：让 Jamie、Larry、Gu、Xiaodong、Heli、Guihua、Zhiping 都围绕自己的真实工作输入信息，系统再从全员信息流里沉淀商机、任务和专家资产。'
+      `5. 对全员试用：让 ${teammates.map((item) => item.name).join('、')} 都围绕自己的真实工作输入信息，系统再从全员信息流里沉淀商机、任务和专家资产。`
     ].join('\n\n');
   }
   if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(text)) {

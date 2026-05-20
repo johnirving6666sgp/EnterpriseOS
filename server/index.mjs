@@ -30,25 +30,33 @@ const modelPricing = {
   strong: { inputPer1k: 0.015, outputPer1k: 0.075 }
 };
 
+const defaultUsers = [
+  { id: 'jamie', name: 'Jamie', role: 'super_admin', password: 'jamie-demo' },
+  { id: 'larry', name: 'Larry', role: 'coworker', password: 'demo' },
+  { id: 'gu', name: 'Gu', role: 'coworker', password: 'demo' },
+  { id: 'xiaodong', name: 'Xiaodong', role: 'coworker', password: 'demo' },
+  { id: 'heli', name: 'Heli', role: 'coworker', password: 'demo' },
+  { id: 'guihua', name: 'Guihua', role: 'coworker', password: 'demo' },
+  { id: 'zhiping', name: 'Zhiping', role: 'coworker', password: 'demo' },
+  { id: 'luyang', name: 'Luyang', role: 'coworker', password: 'demo' },
+  { id: 'kingsong', name: 'Kingsong', role: 'coworker', password: 'demo' }
+];
+
+const defaultAgents = {
+  jamie: { id: 'jamie', name: 'Jamie_AI', ownerId: 'jamie', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
+  larry: { id: 'larry', name: 'Larry_AI', ownerId: 'larry', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
+  gu: { id: 'gu', name: 'Gu_AI', ownerId: 'gu', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
+  xiaodong: { id: 'xiaodong', name: 'Xiaodong_AI', ownerId: 'xiaodong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
+  heli: { id: 'heli', name: 'Heli_AI', ownerId: 'heli', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
+  guihua: { id: 'guihua', name: 'Guihua_AI', ownerId: 'guihua', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
+  zhiping: { id: 'zhiping', name: 'Zhiping_AI', ownerId: 'zhiping', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
+  luyang: { id: 'luyang', name: 'Luyang_AI', ownerId: 'luyang', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
+  kingsong: { id: 'kingsong', name: 'Kingsong_AI', ownerId: 'kingsong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true }
+};
+
 const seed = {
-  users: [
-    { id: 'jamie', name: 'Jamie', role: 'super_admin', password: 'jamie-demo' },
-    { id: 'larry', name: 'Larry', role: 'coworker', password: 'demo' },
-    { id: 'gu', name: 'Gu', role: 'coworker', password: 'demo' },
-    { id: 'xiaodong', name: 'Xiaodong', role: 'coworker', password: 'demo' },
-    { id: 'heli', name: 'Heli', role: 'coworker', password: 'demo' },
-    { id: 'guihua', name: 'Guihua', role: 'coworker', password: 'demo' },
-    { id: 'zhiping', name: 'Zhiping', role: 'coworker', password: 'demo' }
-  ],
-  agents: {
-    jamie: { id: 'jamie', name: 'Jamie_AI', ownerId: 'jamie', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
-    larry: { id: 'larry', name: 'Larry_AI', ownerId: 'larry', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
-    gu: { id: 'gu', name: 'Gu_AI', ownerId: 'gu', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
-    xiaodong: { id: 'xiaodong', name: 'Xiaodong_AI', ownerId: 'xiaodong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
-    heli: { id: 'heli', name: 'Heli_AI', ownerId: 'heli', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
-    guihua: { id: 'guihua', name: 'Guihua_AI', ownerId: 'guihua', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
-    zhiping: { id: 'zhiping', name: 'Zhiping_AI', ownerId: 'zhiping', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true }
-  },
+  users: defaultUsers,
+  agents: defaultAgents,
   systemAgents: {
     internal: { name: '内部信息 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
     external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
@@ -97,8 +105,9 @@ async function ensureStore() {
   try {
     await fs.access(storePath);
     const store = JSON.parse(await fs.readFile(storePath, 'utf8'));
+    let changed = ensureDefaultUsersAndAgents(store);
     if (!store.meta?.fullTeamTrialActivated) {
-      for (const id of ['jamie', 'larry', 'gu', 'xiaodong', 'heli', 'guihua', 'zhiping']) {
+      for (const id of defaultUsers.map((user) => user.id)) {
         const user = store.users?.find((item) => item.id === id);
         if (user) user.active = true;
         if (store.agents?.[id]) store.agents[id].active = true;
@@ -110,13 +119,60 @@ async function ensureStore() {
         at: new Date().toISOString(),
         actor: 'system',
         action: 'trial.full_team_activated',
-        detail: { users: ['jamie', 'larry', 'gu', 'xiaodong', 'heli', 'guihua', 'zhiping'] }
+        detail: { users: defaultUsers.map((user) => user.id) }
       });
-      await writeStore(store);
+      changed = true;
     }
+    if (changed) await writeStore(store);
   } catch {
     await writeStore(seed);
   }
+}
+
+function ensureDefaultUsersAndAgents(store) {
+  let changed = false;
+  store.users ??= [];
+  store.agents ??= {};
+  store.conversations ??= {};
+  store.savedOpportunities ??= {};
+  store.usage ??= {};
+  store.auditLog ??= [];
+
+  for (const user of defaultUsers) {
+    if (!store.users.some((item) => item.id === user.id)) {
+      store.users.push({ ...user, active: true });
+      changed = true;
+    }
+    if (!store.agents[user.id]) {
+      store.agents[user.id] = { ...defaultAgents[user.id] };
+      changed = true;
+    }
+    if (!store.conversations[user.id]) {
+      store.conversations[user.id] = [];
+      changed = true;
+    }
+    if (!store.savedOpportunities[user.id]) {
+      store.savedOpportunities[user.id] = [];
+      changed = true;
+    }
+    if (!store.usage[user.id]) {
+      store.usage[user.id] = emptyUsage();
+      changed = true;
+    }
+  }
+
+  const addedUsers = defaultUsers.filter((user) => store.users.some((item) => item.id === user.id));
+  if (changed) {
+    store.meta = { ...(store.meta ?? {}), teamRosterUpdated20260519: true };
+    store.auditLog.unshift({
+      id: crypto.randomUUID(),
+      at: new Date().toISOString(),
+      actor: 'system',
+      action: 'team.roster.synced',
+      detail: { users: addedUsers.map((user) => user.id) }
+    });
+  }
+  return changed;
 }
 
 async function readStore() {

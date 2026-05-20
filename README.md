@@ -7,7 +7,7 @@
 - 四页 UI 架构：同事桌面、内部信息流动仓、外部商机雷达看板、Jamie 小团队试用控制台
 - 登录和注册模块：同事可登录自己的工作台，新同事可创建账号和默认 Agent
 - 给每位同事配置一个个人 Agent，支持文字和语音输入入口
-- 默认同事/Agent：Jamie、Larry、Gu、Xiaodong、Heli、Guihua、Zhiping
+- 默认同事/Agent：Jamie、Larry、Gu、Xiaodong、Heli、Guihua、Zhiping、Luyang、Kingsong
 - Agent 当前使用人姓名可修改，方便离职后转交给新同事
 - 每个个人 Agent 可选择不同模型：简单工作用便宜模型，复杂判断用更强模型
 - 每个 Agent 可选择模型平台与具体模型：Claude、GPT、OpenRouter 都可作为路由目标
@@ -63,6 +63,7 @@ http://localhost:8787/
 
 - Jamie：`jamie` / `jamie-demo`
 - 其他同事：用户 id 小写，例如 `larry` / `demo`
+- 新增同事：`luyang` / `demo`，`kingsong` / `demo`
 
 ## 上线后端能力
 
