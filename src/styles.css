@@ -302,11 +302,13 @@ h2 {
   flex-direction: column;
   gap: 9px;
   min-height: 360px;
-  max-height: 520px;
+  max-height: min(52svh, 520px);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   border-radius: 8px;
   background: #f2f5f8;
+  scrollbar-gutter: stable;
 }
 
 .workspace-starter {
@@ -335,6 +337,8 @@ h2 {
   max-width: 84%;
   padding: 10px 12px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .message.user {
@@ -1363,15 +1367,20 @@ select {
     padding: 12px;
   }
 
+  .coworker-switcher {
+    max-height: 220px;
+    overflow: auto;
+  }
+
   .message-stream {
     min-height: 260px;
-    max-height: none;
+    height: 46svh;
+    max-height: 420px;
     padding: 10px;
   }
 
   .message {
     max-width: 100%;
-    white-space: pre-line;
   }
 
   .identity-line span {
