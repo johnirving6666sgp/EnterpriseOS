@@ -304,6 +304,7 @@ function EnterpriseApp({ auth, onLogout }) {
     }
   ]);
   const [workflowOwnerId, setWorkflowOwnerId] = useState('larry');
+  const [workflowTesterIds, setWorkflowTesterIds] = useState(['luyang', 'kingsong']);
   const [modelByUser, setModelByUser] = useState(Object.fromEntries(teammates.map((item) => [item.id, item.model])));
   const [routeByUser, setRouteByUser] = useState(
     Object.fromEntries(
@@ -333,7 +334,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const voiceActiveRef = useRef(false);
 
   const isJamie = auth.user.role === 'super_admin';
-  const isWorkflowOwner = auth.user.id === workflowOwnerId;
+  const isWorkflowOwner = auth.user.id === workflowOwnerId || workflowTesterIds.includes(auth.user.id);
   const canManageWorkflow = isJamie || isWorkflowOwner;
   const visibleTeammates = isJamie ? teammates : teammates.filter((item) => item.id === auth.user.id);
   const visiblePage = isJamie ? page : page === 'commander' ? 'workspace' : page;
@@ -398,6 +399,7 @@ function EnterpriseApp({ auth, onLogout }) {
         setSavedByUser(state.savedOpportunities ?? {});
         setBroadcasts(state.broadcasts ?? []);
         setWorkflowOwnerId(state.workflowOwnerId ?? 'larry');
+        setWorkflowTesterIds(state.workflowTesterIds ?? ['luyang', 'kingsong']);
         setUsageByUser((current) => ({ ...current, ...(state.usage ?? {}) }));
         setModelByUser((current) => ({
           ...current,

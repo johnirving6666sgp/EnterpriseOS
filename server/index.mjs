@@ -21,6 +21,11 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
+const WORKFLOW_TESTER_IDS = (process.env.WORKFLOW_TESTER_IDS || 'luyang,kingsong')
+  .split(',')
+  .map((id) => id.trim().toLowerCase())
+  .filter(Boolean);
+const workflowAccessIds = new Set([WORKFLOW_OWNER_ID, ...WORKFLOW_TESTER_IDS]);
 const workflowSystemAgentIds = new Set(['task', 'quote']);
 const allowedOrigins = (process.env.APP_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,https://timeconnector.net,https://www.timeconnector.net')
   .split(',')
@@ -244,7 +249,7 @@ function verify(token) {
 }
 
 function isWorkflowOwner(session) {
-  return session?.role === 'super_admin' || session?.userId === WORKFLOW_OWNER_ID;
+  return session?.role === 'super_admin' || workflowAccessIds.has(session?.userId);
 }
 
 function requireAuth(req, res, next) {
@@ -263,7 +268,7 @@ function requireJamie(req, res, next) {
 function requireSystemAgentRoutePermission(req, res, next) {
   const { id } = req.params;
   if (req.session?.role === 'super_admin') return next();
-  if (workflowSystemAgentIds.has(id) && req.session?.userId === WORKFLOW_OWNER_ID) return next();
+  if (workflowSystemAgentIds.has(id) && workflowAccessIds.has(req.session?.userId)) return next();
   return res.status(403).json({ error: workflowSystemAgentIds.has(id) ? 'workflow_owner_only' : 'jamie_only' });
 }
 
@@ -356,7 +361,7 @@ app.post('/api/register', async (req, res) => {
 app.get('/api/state', requireAuth, async (req, res) => {
   const store = await readStore();
   if (req.session.role === 'super_admin') {
-    return res.json({ ...redactPasswords(store), workflowOwnerId: WORKFLOW_OWNER_ID });
+    return res.json({ ...redactPasswords(store), workflowOwnerId: WORKFLOW_OWNER_ID, workflowTesterIds: WORKFLOW_TESTER_IDS });
   }
   const ownAgent = store.agents[req.session.userId];
   const userBroadcasts = (store.broadcasts ?? []).filter((item) => item.recipients.includes(req.session.userId));
@@ -387,6 +392,7 @@ app.get('/api/state', requireAuth, async (req, res) => {
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
     systemAgents: store.systemAgents,
     workflowOwnerId: WORKFLOW_OWNER_ID,
+    workflowTesterIds: WORKFLOW_TESTER_IDS,
     workflowAgentOutputs: isWorkflowOwner(req.session)
       ? {
           task: store.systemAgentOutputs?.task ?? [],
