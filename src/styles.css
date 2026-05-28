@@ -204,6 +204,11 @@ h2 {
   font-weight: 850;
 }
 
+.workflow-owner-chip {
+  color: #155e52;
+  background: #ecfff4;
+}
+
 .panel {
   min-width: 0;
   padding: 16px;
@@ -1109,6 +1114,62 @@ select {
   gap: 16px;
 }
 
+.workflow-agent-panel,
+.workflow-output-list {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.workflow-agent-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.workflow-agent-panel strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #172033;
+}
+
+.workflow-agent-panel p {
+  margin: 8px 0 0;
+  color: #667085;
+  line-height: 1.45;
+}
+
+.workflow-agent-panel span {
+  display: inline-flex;
+  margin-top: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #155e52;
+  background: #ecfff4;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.workflow-agent-panel article {
+  grid-column: 1 / -1;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.workflow-agent-panel article p {
+  margin-top: 6px;
+}
+
+.workflow-task-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .business-heading {
   display: flex;
   align-items: flex-start;
@@ -1316,6 +1377,8 @@ select {
   .masonry-board,
   .insight-wall,
   .expert-row,
+  .workflow-agent-panel,
+  .workflow-task-grid,
   .system-agent-grid,
   .broadcast-form,
   .feedback-summary,

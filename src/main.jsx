@@ -89,12 +89,28 @@ const systemAgents = [
     defaultProvider: 'openrouter',
     defaultModel: 'openrouter/openai/gpt-4.1-mini',
     reason: '需要高吞吐、多来源路由和成本控制，默认走 OpenRouter GPT-4.1 mini；深度研判再升 GPT-4.1。'
+  },
+  {
+    id: 'task',
+    name: '任务看板 Agent',
+    job: '把对话、会议纪要、广播反馈和商机收藏转成任务，看板负责人为 Larry',
+    defaultProvider: 'openrouter',
+    defaultModel: 'openrouter/openai/gpt-4.1-mini',
+    reason: '需要高频提取行动项，默认用低成本模型；复杂会议纪要可临时升 GPT-4.1。'
+  },
+  {
+    id: 'quote',
+    name: '报价 Agent',
+    job: '理解设备、熔炼服务和材料试制报价结构，协助 Larry 生成内部报价草案',
+    defaultProvider: 'openrouter',
+    defaultModel: 'openrouter/openai/gpt-4.1-mini',
+    reason: '报价需要稳妥、结构化和可审批，默认 GPT-4.1 mini；关键客户报价可升 GPT-4.1。'
   }
 ];
 
 const teammates = [
   { id: 'jamie', name: 'Jamie', agent: 'Jamie_AI', model: 'strong', role: '小团队试用负责人' },
-  { id: 'larry', name: 'Larry', agent: 'Larry_AI', model: 'balanced', role: '客户与设备现场' },
+  { id: 'larry', name: 'Larry', agent: 'Larry_AI', model: 'balanced', role: '任务/报价流程负责人' },
   { id: 'gu', name: 'Gu', agent: 'Gu_AI', model: 'strong', role: '工艺与设备参数' },
   { id: 'xiaodong', name: 'Xiaodong', agent: 'Xiaodong_AI', model: 'balanced', role: '项目协作' },
   { id: 'heli', name: 'Heli', agent: 'Heli_AI', model: 'lite', role: '运营支持' },
@@ -118,7 +134,9 @@ const recommendedAgentRoutes = {
 
 const recommendedSystemRoutes = {
   internal: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-  external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
+  external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  task: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  quote: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
 };
 
 const baseMessages = {
@@ -276,6 +294,7 @@ function EnterpriseApp({ auth, onLogout }) {
       readBy: {}
     }
   ]);
+  const [workflowOwnerId, setWorkflowOwnerId] = useState('larry');
   const [modelByUser, setModelByUser] = useState(Object.fromEntries(teammates.map((item) => [item.id, item.model])));
   const [routeByUser, setRouteByUser] = useState(
     Object.fromEntries(
@@ -305,6 +324,8 @@ function EnterpriseApp({ auth, onLogout }) {
   const voiceActiveRef = useRef(false);
 
   const isJamie = auth.user.role === 'super_admin';
+  const isWorkflowOwner = auth.user.id === workflowOwnerId;
+  const canManageWorkflow = isJamie || isWorkflowOwner;
   const visibleTeammates = isJamie ? teammates : teammates.filter((item) => item.id === auth.user.id);
   const visiblePage = isJamie ? page : page === 'commander' ? 'workspace' : page;
   const coworker = teammates.find((item) => item.id === workspaceId) ?? teammates[1];
@@ -365,6 +386,7 @@ function EnterpriseApp({ auth, onLogout }) {
         setGeneratedOpportunities(state.generatedOpportunities ?? []);
         setSavedByUser(state.savedOpportunities ?? {});
         setBroadcasts(state.broadcasts ?? []);
+        setWorkflowOwnerId(state.workflowOwnerId ?? 'larry');
         setUsageByUser((current) => ({ ...current, ...(state.usage ?? {}) }));
         setModelByUser((current) => ({
           ...current,
@@ -811,6 +833,7 @@ function EnterpriseApp({ auth, onLogout }) {
             </button>
           )}
           <span className="login-chip">当前登录：{auth.user.name}</span>
+          {isWorkflowOwner && <span className="login-chip workflow-owner-chip">任务/报价负责人</span>}
           <button onClick={onLogout}>退出登录</button>
         </nav>
       </header>
@@ -859,11 +882,30 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'tasks' && <TaskBoard />}
+      {visiblePage === 'tasks' && (
+        <TaskBoard
+          canManageWorkflow={canManageWorkflow}
+          isWorkflowOwner={isWorkflowOwner}
+          runTaskAgent={() => runSystemAgent('task')}
+          running={systemRunning.task}
+          taskOutputs={systemOutputs.task ?? []}
+          workflowOwnerName={getTeammateName(workflowOwnerId)}
+        />
+      )}
 
       {visiblePage === 'crm' && <CustomerManager />}
 
-      {visiblePage === 'quote' && <QuoteBuilder setPage={setPage} />}
+      {visiblePage === 'quote' && (
+        <QuoteBuilder
+          canManageWorkflow={canManageWorkflow}
+          isWorkflowOwner={isWorkflowOwner}
+          quoteOutputs={systemOutputs.quote ?? []}
+          running={systemRunning.quote}
+          runQuoteAgent={() => runSystemAgent('quote')}
+          setPage={setPage}
+          workflowOwnerName={getTeammateName(workflowOwnerId)}
+        />
+      )}
 
       {visiblePage === 'broadcast' && (
         <BroadcastCenter broadcasts={broadcasts} createBroadcast={createBroadcast} totalUsage={totalUsage} />
@@ -1431,19 +1473,53 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   );
 }
 
-function TaskBoard() {
+function TaskBoard({ canManageWorkflow, isWorkflowOwner, runTaskAgent, running, taskOutputs, workflowOwnerName }) {
+  const latestOutput = taskOutputs[0];
+  const extractedTasks = latestOutput?.tasks ?? [];
   return (
     <section className="business-page">
       <div className="business-heading">
         <div>
           <h2>任务看板</h2>
-          <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。</p>
+          <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。流程负责人：{workflowOwnerName}。</p>
         </div>
-        <button className="broadcast-button compact-button">
+        <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
           <ClipboardList size={17} />
           新建任务
         </button>
       </div>
+      <WorkflowAgentPanel
+        canManageWorkflow={canManageWorkflow}
+        icon={<ClipboardList size={18} />}
+        isWorkflowOwner={isWorkflowOwner}
+        title="任务看板 Agent"
+        description="Larry 负责运行和校准任务 Agent：从聊天、会议纪要、广播反馈和商机收藏里提取任务，但不查看其他同事私密聊天原文。"
+        running={running}
+        runLabel="运行任务 Agent"
+        runningLabel="任务 Agent 提取中..."
+        onRun={runTaskAgent}
+        latestTitle={latestOutput?.title}
+        latestText={latestOutput?.text || latestOutput?.learning}
+      />
+      {extractedTasks.length > 0 && (
+        <section className="workflow-output-list">
+          <strong>任务 Agent 最新提取</strong>
+          <div className="workflow-task-grid">
+            {extractedTasks.map((task, index) => (
+              <article className="task-card" key={`${task.title}-${index}`}>
+                <h3>{task.title}</h3>
+                <div className="task-meta">
+                  <span>{getTeammateName(task.owner)}</span>
+                  <span>{task.due}</span>
+                  <span>{task.source}</span>
+                </div>
+                <p>{task.next}</p>
+                <div className={`priority ${task.priority || 'medium'}`}>{priorityLabel(task.priority || 'medium')}</div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="task-board">
         {taskColumns.map((column) => (
           <section className="task-column" key={column.id}>
@@ -1506,19 +1582,34 @@ function CustomerManager() {
   );
 }
 
-function QuoteBuilder({ setPage }) {
+function QuoteBuilder({ canManageWorkflow, isWorkflowOwner, quoteOutputs, running, runQuoteAgent, setPage, workflowOwnerName }) {
+  const latestOutput = quoteOutputs[0];
+  const quote = latestOutput?.quote;
   return (
     <section className="business-page">
       <div className="business-heading">
         <div>
           <h2>报价方案</h2>
-          <p>把客户需求、设备参数和历史报价组合成可发送方案。</p>
+          <p>把客户需求、设备参数和历史报价组合成内部报价草案。流程负责人：{workflowOwnerName}。</p>
         </div>
-        <button className="broadcast-button compact-button">
+        <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
           <FileText size={17} />
           保存报价
         </button>
       </div>
+      <WorkflowAgentPanel
+        canManageWorkflow={canManageWorkflow}
+        icon={<CircleDollarSign size={18} />}
+        isWorkflowOwner={isWorkflowOwner}
+        title="报价 Agent"
+        description="Larry 负责运行报价 Agent：它理解设备、熔炼服务、材料试制和工艺验证的报价结构，输出内部草案，正式报价仍需 Jamie 审批。"
+        running={running}
+        runLabel="运行报价 Agent"
+        runningLabel="报价 Agent 分析中..."
+        onRun={runQuoteAgent}
+        latestTitle={latestOutput?.title}
+        latestText={latestOutput?.text || latestOutput?.learning}
+      />
       <div className="quote-layout">
         <section className="quote-form-panel">
           <label>
@@ -1552,12 +1643,57 @@ function QuoteBuilder({ setPage }) {
           <div className="quote-total">合计金额：<strong>¥34,200</strong></div>
         </section>
         <aside className="quote-ai-panel">
-          <strong>AI 报价助手</strong>
-          <p>利润率约 32%，价格竞争力良好；建议补充交付周期、质保范围和关键材料说明。</p>
-          <p>推荐话术：基于贵方航天级高压阀门需求，我们建议采用成熟型号并预留参数确认窗口。</p>
+          <strong>报价 Agent 建议</strong>
+          {quote ? (
+            <>
+              <p>{quote.summary}</p>
+              <p>报价类型：{quote.type} · 审批：{quote.approval}</p>
+              <p>缺失参数：{(quote.missing ?? []).join('、') || '暂无'}</p>
+              <p>风险：{(quote.risk ?? []).join('、') || '暂无'}</p>
+              <p>下一步：{quote.next}</p>
+            </>
+          ) : (
+            <>
+              <p>利润率约 32%，价格竞争力良好；建议补充交付周期、质保范围和关键材料说明。</p>
+              <p>推荐话术：基于贵方航天级高压阀门需求，我们建议采用成熟型号并预留参数确认窗口。</p>
+            </>
+          )}
           <button onClick={() => setPage('broadcast')}>广播给相关同事审核</button>
         </aside>
       </div>
+    </section>
+  );
+}
+
+function WorkflowAgentPanel({
+  canManageWorkflow,
+  description,
+  icon,
+  isWorkflowOwner,
+  latestText,
+  latestTitle,
+  onRun,
+  runLabel,
+  running,
+  runningLabel,
+  title
+}) {
+  return (
+    <section className="workflow-agent-panel">
+      <div>
+        <strong>{icon}{title}</strong>
+        <p>{description}</p>
+        <span>{isWorkflowOwner ? '你现在拥有这个流程的日常管理权。' : 'Jamie 保留最高权限；Larry 负责日常推进。'}</span>
+      </div>
+      <button className="agent-run-button" onClick={onRun} disabled={!canManageWorkflow || running}>
+        {running ? runningLabel : runLabel}
+      </button>
+      {latestTitle && (
+        <article>
+          <b>{latestTitle}</b>
+          <p>{latestText}</p>
+        </article>
+      )}
     </section>
   );
 }

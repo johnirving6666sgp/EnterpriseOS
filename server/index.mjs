@@ -20,6 +20,8 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
+const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
+const workflowSystemAgentIds = new Set(['task', 'quote']);
 const allowedOrigins = (process.env.APP_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,https://timeconnector.net,https://www.timeconnector.net')
   .split(',')
   .map((origin) => origin.trim())
@@ -60,10 +62,12 @@ const seed = {
   agents: defaultAgents,
   systemAgents: {
     internal: { name: '内部信息 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-    external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
+    external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+    task: { name: '任务看板 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID },
+    quote: { name: '报价 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID }
   },
   conversations: {},
-  systemAgentOutputs: { internal: [], external: [] },
+  systemAgentOutputs: { internal: [], external: [], task: [], quote: [] },
   generatedOpportunities: [],
   savedOpportunities: { larry: ['aerospace-valve'] },
   conversationArchives: {},
@@ -134,10 +138,26 @@ function ensureDefaultUsersAndAgents(store) {
   let changed = false;
   store.users ??= [];
   store.agents ??= {};
+  store.systemAgents ??= {};
+  store.systemAgentOutputs ??= {};
   store.conversations ??= {};
   store.savedOpportunities ??= {};
   store.usage ??= {};
   store.auditLog ??= [];
+
+  for (const [id, agent] of Object.entries(seed.systemAgents)) {
+    if (!store.systemAgents[id]) {
+      store.systemAgents[id] = { ...agent };
+      changed = true;
+    } else if (agent.ownerId && !store.systemAgents[id].ownerId) {
+      store.systemAgents[id].ownerId = agent.ownerId;
+      changed = true;
+    }
+    if (!store.systemAgentOutputs[id]) {
+      store.systemAgentOutputs[id] = [];
+      changed = true;
+    }
+  }
 
   for (const user of defaultUsers) {
     if (!store.users.some((item) => item.id === user.id)) {
@@ -203,6 +223,10 @@ function verify(token) {
   return session;
 }
 
+function isWorkflowOwner(session) {
+  return session?.role === 'super_admin' || session?.userId === WORKFLOW_OWNER_ID;
+}
+
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
   const session = verify(token);
@@ -214,6 +238,13 @@ function requireAuth(req, res, next) {
 function requireJamie(req, res, next) {
   if (req.session?.role !== 'super_admin') return res.status(403).json({ error: 'jamie_only' });
   next();
+}
+
+function requireSystemAgentRoutePermission(req, res, next) {
+  const { id } = req.params;
+  if (req.session?.role === 'super_admin') return next();
+  if (workflowSystemAgentIds.has(id) && req.session?.userId === WORKFLOW_OWNER_ID) return next();
+  return res.status(403).json({ error: workflowSystemAgentIds.has(id) ? 'workflow_owner_only' : 'jamie_only' });
 }
 
 function estimateTokens(text = '') {
@@ -305,7 +336,7 @@ app.post('/api/register', async (req, res) => {
 app.get('/api/state', requireAuth, async (req, res) => {
   const store = await readStore();
   if (req.session.role === 'super_admin') {
-    return res.json(redactPasswords(store));
+    return res.json({ ...redactPasswords(store), workflowOwnerId: WORKFLOW_OWNER_ID });
   }
   const ownAgent = store.agents[req.session.userId];
   const userBroadcasts = (store.broadcasts ?? []).filter((item) => item.recipients.includes(req.session.userId));
@@ -332,7 +363,14 @@ app.get('/api/state', requireAuth, async (req, res) => {
     savedOpportunities: { [req.session.userId]: store.savedOpportunities[req.session.userId] ?? [] },
     broadcasts: userBroadcasts,
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
-    systemAgents: store.systemAgents
+    systemAgents: store.systemAgents,
+    workflowOwnerId: WORKFLOW_OWNER_ID,
+    workflowAgentOutputs: isWorkflowOwner(req.session)
+      ? {
+          task: store.systemAgentOutputs?.task ?? [],
+          quote: store.systemAgentOutputs?.quote ?? []
+        }
+      : undefined
   });
 });
 
@@ -403,7 +441,7 @@ app.post('/api/agents/:id/route', requireAuth, requireJamie, async (req, res) =>
   res.json({ agent: store.agents[id] });
 });
 
-app.post('/api/system-agents/:id/route', requireAuth, requireJamie, async (req, res) => {
+app.post('/api/system-agents/:id/route', requireAuth, requireSystemAgentRoutePermission, async (req, res) => {
   const { id } = req.params;
   const { provider, apiModel } = req.body ?? {};
   const store = await readStore();
@@ -417,6 +455,9 @@ app.post('/api/system-agents/:id/route', requireAuth, requireJamie, async (req, 
 app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   const { id } = req.params;
   if (id === 'internal' && req.session.role !== 'super_admin') return res.status(403).json({ error: 'jamie_only' });
+  if (workflowSystemAgentIds.has(id) && !isWorkflowOwner(req.session)) {
+    return res.status(403).json({ error: 'workflow_owner_only' });
+  }
   const store = await readStore();
   const systemAgent = store.systemAgents[id];
   if (!systemAgent) return res.status(404).json({ error: 'system_agent_not_found' });
@@ -853,23 +894,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
     };
   }
 
-  const spec =
-    id === 'internal'
-      ? [
-          '你是内部信息 Agent，目标不是总结，而是从团队内部信息流中发现“巨大商机线索”。',
-          '你可以读取原始对话、收藏、广播反馈和讨论邀请，但输出必须去除具体隐私字句，只沉淀可复用模式、专家能力和可行动商机。',
-          '重点寻找：客户反复追问、报价卡点、材料/设备能力可复用点、多个同事都碰到的需求、能转化为大客户开发的异常信号。',
-          '请只返回 JSON：{"title":"...","text":"...","source":"...","asset":"...","learning":"...","opportunity":{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"..."},"broadcast":{"title":"...","content":"..."}}。',
-          'broadcast 要写给全员，提醒大家看见同一个巨大商机线索并补充信息。'
-        ].join('\n')
-      : [
-          '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
-          '不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径，并说明验证路径。',
-          '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
-          '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',
-          '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","learning":"...","broadcast":{"title":"...","content":"..."}}。',
-          'title 要像商机卡片标题，why 要讲清楚为什么可能是大机会，action 要说明同事下一步怎么验证和补充信息。'
-        ].join('\n');
+  const spec = getSystemAgentSpec(id);
 
   try {
     const result = await callOpenRouter({
@@ -914,7 +939,77 @@ function parseJsonObject(text) {
   }
 }
 
+function getSystemAgentSpec(id) {
+  if (id === 'internal') {
+    return [
+      '你是内部信息 Agent，目标不是总结，而是从团队内部信息流中发现“巨大商机线索”。',
+      '你可以读取原始对话、收藏、广播反馈和讨论邀请，但输出必须去除具体隐私字句，只沉淀可复用模式、专家能力和可行动商机。',
+      '重点寻找：客户反复追问、报价卡点、材料/设备能力可复用点、多个同事都碰到的需求、能转化为大客户开发的异常信号。',
+      '请只返回 JSON：{"title":"...","text":"...","source":"...","asset":"...","learning":"...","opportunity":{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"..."},"broadcast":{"title":"...","content":"..."}}。',
+      'broadcast 要写给全员，提醒大家看见同一个巨大商机线索并补充信息。'
+    ].join('\n');
+  }
+  if (id === 'task') {
+    return [
+      '你是任务看板 Agent，业务负责人是 Larry。目标是把团队信息流转成可执行任务，而不是泛泛总结。',
+      '你可以读取原始信息进行任务提取，但输出给 Larry 和同事时不要泄露私密聊天原文，只输出任务标题、负责人、截止时间、优先级、来源类型和下一步。',
+      '重点寻找：会议纪要中的分工、客户跟进动作、报价准备、设备参数确认、材料信息补充、广播反馈中的“跟进中/需要讨论”。',
+      '请只返回 JSON：{"title":"...","text":"...","learning":"...","tasks":[{"title":"...","owner":"larry|gu|xiaodong|heli|guihua|zhiping|luyang|kingsong","priority":"high|medium|low","due":"今天|明天|本周|待定","source":"对话|广播|商机|会议纪要","next":"..."}],"broadcast":{"title":"...","content":"..."}}。',
+      'broadcast 写给相关同事，提醒大家确认分工和反馈卡点。'
+    ].join('\n');
+  }
+  if (id === 'quote') {
+    return [
+      '你是报价 Agent，业务负责人是 Larry。你理解公司的基础业务：悬浮真空熔炼设备、新型金属材料研发、材料试制、熔炼服务、设备选型和客户开发。',
+      '你的目标是把客户需求转成内部报价草案，不直接承诺正式价格；重要报价必须提醒提交 Jamie 审批。',
+      '重点提取：客户背景、报价类型（设备/服务/材料试制/工艺验证/打包）、缺失参数、风险、报价组成、交付周期、需要同事补充的信息。',
+      '请只返回 JSON：{"title":"...","text":"...","learning":"...","quote":{"customer":"...","type":"设备报价|熔炼服务|材料试制|工艺验证|打包方案","summary":"...","missing":["..."],"risk":["..."],"next":"...","approval":"需要 Jamie 审批|Larry 可继续补充"},"broadcast":{"title":"...","content":"..."}}。',
+      'broadcast 写给 Larry 和相关同事，推动补齐参数，而不是把报价发给客户。'
+    ].join('\n');
+  }
+  return [
+    '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
+    '不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径，并说明验证路径。',
+    '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
+    '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',
+    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","learning":"...","broadcast":{"title":"...","content":"..."}}。',
+    'title 要像商机卡片标题，why 要讲清楚为什么可能是大机会，action 要说明同事下一步怎么验证和补充信息。'
+  ].join('\n');
+}
+
 function normalizeSystemAgentOutput(id, data, raw) {
+  if (id === 'task') {
+    return {
+      id: `task-${Date.now()}`,
+      at: new Date().toISOString(),
+      title: data.title || '任务 Agent 已生成本周行动清单',
+      text: data.text || '任务 Agent 已从对话、广播、收藏商机和会议信息中提取可执行动作。',
+      learning: data.learning || '任务 Agent 学习到：团队需要把客户跟进、参数确认、报价准备和讨论邀请统一落到任务看板。',
+      tasks: Array.isArray(data.tasks) ? data.tasks.slice(0, 8) : fallbackWorkflowTasks(),
+      broadcast: normalizeSystemBroadcast(data.broadcast, {
+        type: '工作计划',
+        title: data.title || '任务 Agent 生成新的协作任务',
+        action: data.text || '请相关同事确认负责人、截止时间和卡点。'
+      }),
+      raw
+    };
+  }
+  if (id === 'quote') {
+    return {
+      id: `quote-${Date.now()}`,
+      at: new Date().toISOString(),
+      title: data.title || '报价 Agent 已生成报价准备建议',
+      text: data.text || '报价 Agent 已将客户需求拆成报价类型、缺失参数、风险和下一步。',
+      learning: data.learning || '报价 Agent 学习到：设备报价和熔炼服务报价需要先补齐材料体系、单炉重量、批次、检测要求和交付边界。',
+      quote: data.quote || fallbackQuoteDraft(),
+      broadcast: normalizeSystemBroadcast(data.broadcast, {
+        type: '报价方案',
+        title: data.title || '报价 Agent 需要补充报价信息',
+        action: data.text || '请 Larry 牵头确认客户需求、设备参数、材料体系和是否需要 Jamie 审批。'
+      }),
+      raw
+    };
+  }
   if (id === 'external') {
     const opportunity = {
       id: `external-${Date.now()}`,
@@ -965,10 +1060,75 @@ function normalizeSystemBroadcast(broadcast, source) {
   const content =
     broadcast?.content ||
     [source?.why, source?.action, source?.urgency ? `紧急度：${source.urgency}` : ''].filter(Boolean).join('\n');
-  return { type: '商机线索', title, content };
+  return { type: broadcast?.type || source?.type || '商机线索', title, content };
+}
+
+function fallbackWorkflowTasks() {
+  return [
+    {
+      title: '确认本周重点客户跟进清单',
+      owner: 'larry',
+      priority: 'high',
+      due: '今天',
+      source: '任务 Agent',
+      next: 'Larry 先筛出最可能成交或最需要技术支持的客户。'
+    },
+    {
+      title: '补齐报价所需设备和材料参数',
+      owner: 'gu',
+      priority: 'medium',
+      due: '本周',
+      source: '报价准备',
+      next: '确认关键设备参数、材料体系和交付风险。'
+    }
+  ];
+}
+
+function fallbackQuoteDraft() {
+  return {
+    customer: '待确认客户',
+    type: '打包方案',
+    summary: '先判断客户是需要设备整机、熔炼服务、材料试制，还是设备加服务组合。',
+    missing: ['材料体系', '单炉重量', '批次数', '检测要求', '交付时间', '客户预算'],
+    risk: ['参数不足导致报价偏差', '交付周期和质保边界需要明确', '正式报价前需要 Jamie 审批'],
+    next: 'Larry 牵头补齐客户需求，报价 Agent 生成内部草案后提交 Jamie 审批。',
+    approval: '需要 Jamie 审批'
+  };
 }
 
 function fallbackSystemAgentOutput(id, detail = '') {
+  if (id === 'task') {
+    return normalizeSystemAgentOutput(
+      'task',
+      {
+        title: '任务 Agent：本周任务流转建议',
+        text: `建议 Larry 今天先把客户跟进、参数确认、报价准备三类任务分配到人，并要求同事反馈卡点。${detail}`,
+        learning: '任务 Agent 将持续把对话、广播反馈和商机收藏转成任务看板动作。',
+        tasks: fallbackWorkflowTasks(),
+        broadcast: {
+          title: '任务 Agent 提醒：请确认本周任务负责人',
+          content: '请相关同事确认客户跟进、设备参数和报价准备的负责人、截止时间和卡点。'
+        }
+      },
+      detail
+    );
+  }
+  if (id === 'quote') {
+    return normalizeSystemAgentOutput(
+      'quote',
+      {
+        title: '报价 Agent：报价准备建议',
+        text: `报价前先确认报价类型、材料体系、单炉重量、批次、检测要求、交付周期和审批边界。${detail}`,
+        learning: '报价 Agent 将持续学习设备报价、熔炼服务报价和材料试制报价的结构。',
+        quote: fallbackQuoteDraft(),
+        broadcast: {
+          title: '报价 Agent 提醒：补齐报价参数',
+          content: '请 Larry 牵头补齐客户需求、设备/材料参数和交付边界；正式报价前提交 Jamie 审批。'
+        }
+      },
+      detail
+    );
+  }
   if (id === 'external') {
     return normalizeSystemAgentOutput(
       'external',
@@ -1067,7 +1227,9 @@ async function writeObsidian(store) {
 
   await fs.writeFile(
     path.join(OBSIDIAN_VAULT, 'insights', 'system-agents.md'),
-    `# System Agents\n\n## 内部信息 Agent\n${store.systemAgents.internal.provider}/${store.systemAgents.internal.apiModel}\n\n## 外部机会 Agent\n${store.systemAgents.external.provider}/${store.systemAgents.external.apiModel}\n`
+    `# System Agents\n\n${Object.entries(store.systemAgents ?? {})
+      .map(([id, agent]) => `## ${agent.name ?? id}\n- id: ${id}\n- owner: ${agent.ownerId ?? 'Jamie'}\n- model: ${agent.provider}/${agent.apiModel}\n`)
+      .join('\n')}`
   );
 
   const broadcastLines = (store.broadcasts ?? [])
