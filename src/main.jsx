@@ -239,6 +239,13 @@ const taskColumns = [
   }
 ];
 
+const taskStatusColumns = [
+  { id: 'todo', title: '待办' },
+  { id: 'progress', title: '进行中' },
+  { id: 'review', title: '等待反馈' },
+  { id: 'done', title: '已完成' }
+];
+
 const customerSeed = [
   { name: '华东有色金属研究院', type: '科研机构', stage: '洽谈中', contact: '张主任', phone: '138****8888', last: '5 天前' },
   { name: '上海航天设备制造', type: '航天军工', stage: '报价阶段', contact: '李工', phone: '139****6666', last: '今天' },
@@ -280,8 +287,10 @@ function EnterpriseApp({ auth, onLogout }) {
   const [listening, setListening] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
   const [broadcasted, setBroadcasted] = useState([]);
-  const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [] });
+  const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [], task: [], quote: [] });
   const [generatedOpportunities, setGeneratedOpportunities] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [quotes, setQuotes] = useState([]);
   const [systemRunning, setSystemRunning] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
@@ -382,8 +391,10 @@ function EnterpriseApp({ auth, onLogout }) {
         const agentEntries = Object.entries(state.agents ?? {});
 
         setMessagesByUser({ ...baseMessages, ...(state.conversations ?? {}) });
-        setSystemOutputs({ internal: [], external: [], ...(state.systemAgentOutputs ?? {}) });
+        setSystemOutputs({ internal: [], external: [], task: [], quote: [], ...(state.systemAgentOutputs ?? {}) });
         setGeneratedOpportunities(state.generatedOpportunities ?? []);
+        setTasks(state.tasks ?? []);
+        setQuotes(state.quotes ?? []);
         setSavedByUser(state.savedOpportunities ?? {});
         setBroadcasts(state.broadcasts ?? []);
         setWorkflowOwnerId(state.workflowOwnerId ?? 'larry');
@@ -466,6 +477,9 @@ function EnterpriseApp({ auth, onLogout }) {
           setUsageByUser((current) => ({ ...current, [id]: payload.usage }));
         } else {
           recordUsage(id, displayText, reply);
+        }
+        if (payload.createdTasks?.length) {
+          setTasks((current) => mergeById(payload.createdTasks, current));
         }
       })
       .catch(() => {
@@ -756,6 +770,12 @@ function EnterpriseApp({ auth, onLogout }) {
             return exists ? current : [payload.broadcast, ...current];
           });
         }
+        if (payload.createdTasks?.length) {
+          setTasks((current) => mergeById(payload.createdTasks, current));
+        }
+        if (payload.quotes?.length) {
+          setQuotes(payload.quotes);
+        }
         setSystemOutputs((current) => ({
           ...current,
           [id]: [payload.output, ...(current[id] ?? [])].slice(0, 12)
@@ -794,6 +814,69 @@ function EnterpriseApp({ auth, onLogout }) {
           const alreadyExists = updated.some((item) => item.id === payload.discussionBroadcast.id);
           return alreadyExists ? updated : [payload.discussionBroadcast, ...updated];
         });
+        if (payload.task) setTasks((current) => mergeById([payload.task], current));
+      })
+      .catch(() => {});
+  };
+
+  const createTask = (task = {}) => {
+    const localTask = {
+      id: `local-task-${Date.now()}`,
+      title: task.title || '新的跟进任务',
+      tag: task.tag || '工作任务',
+      owner: task.owner || workspaceId,
+      due: task.due || '本周',
+      priority: task.priority || 'medium',
+      status: task.status || 'todo',
+      source: task.source || '手动创建',
+      next: task.next || '确认下一步动作。'
+    };
+    setTasks((current) => [localTask, ...current]);
+    apiFetch('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify(localTask)
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('task_create_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (payload.tasks) setTasks(payload.tasks);
+      })
+      .catch(() => {});
+  };
+
+  const createTaskFromMessage = (message) => {
+    apiFetch('/api/tasks/from-message', {
+      method: 'POST',
+      body: JSON.stringify({ ownerId: workspaceId, text: message.text, source: `${coworker.agent} 对话` })
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('task_from_message_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (payload.tasks) setTasks(payload.tasks);
+        if (payload.task) setPage('tasks');
+      })
+      .catch(() => {});
+  };
+
+  const updateTask = (taskId, patch) => {
+    setTasks((current) => current.map((task) => (task.id === taskId ? { ...task, ...patch } : task)));
+    apiFetch(`/api/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('task_update_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (payload.tasks) setTasks(payload.tasks);
+        if (payload.systemAgentOutputs) {
+          setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
+        }
       })
       .catch(() => {});
   };
@@ -847,6 +930,7 @@ function EnterpriseApp({ auth, onLogout }) {
           messages={messages}
           isThinking={isThinking}
           broadcasts={inboxBroadcasts}
+          createTaskFromMessage={createTaskFromMessage}
           savedCards={savedCards}
           selectedId={workspaceId}
           isJamie={isJamie}
@@ -884,9 +968,12 @@ function EnterpriseApp({ auth, onLogout }) {
       {visiblePage === 'tasks' && (
         <TaskBoard
           canManageWorkflow={canManageWorkflow}
+          createTask={createTask}
           runTaskAgent={() => runSystemAgent('task')}
           running={systemRunning.task}
+          tasks={tasks}
           taskOutputs={systemOutputs.task ?? []}
+          updateTask={updateTask}
         />
       )}
 
@@ -895,6 +982,7 @@ function EnterpriseApp({ auth, onLogout }) {
       {visiblePage === 'quote' && (
         <QuoteBuilder
           canManageWorkflow={canManageWorkflow}
+          quotes={quotes}
           quoteOutputs={systemOutputs.quote ?? []}
           running={systemRunning.quote}
           runQuoteAgent={() => runSystemAgent('quote')}
@@ -962,6 +1050,7 @@ function CoworkerWorkspace({
   stopVoice,
   sendMessage,
   clearConversation,
+  createTaskFromMessage,
   removeAttachment,
   submitFeedback
 }) {
@@ -1030,6 +1119,11 @@ function CoworkerWorkspace({
             messages.map((message, index) => (
               <div className={`message ${message.from} ${message.thinking ? 'thinking' : ''}`} key={message.id ?? `${message.from}-${index}`}>
                 {message.text}
+                {message.from === 'agent' && !message.thinking && (
+                  <button className="message-task-button" onClick={() => createTaskFromMessage(message)}>
+                    生成任务
+                  </button>
+                )}
               </div>
             ))
           ) : (
@@ -1468,9 +1562,13 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   );
 }
 
-function TaskBoard({ canManageWorkflow, runTaskAgent, running, taskOutputs }) {
+function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks, taskOutputs, updateTask }) {
   const latestOutput = taskOutputs[0];
   const extractedTasks = latestOutput?.tasks ?? [];
+  const groupedTasks = taskStatusColumns.map((column) => ({
+    ...column,
+    items: tasks.filter((task) => task.status === column.id)
+  }));
   return (
     <section className="business-page">
       <div className="business-heading">
@@ -1478,7 +1576,11 @@ function TaskBoard({ canManageWorkflow, runTaskAgent, running, taskOutputs }) {
           <h2>任务看板</h2>
           <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。</p>
         </div>
-        <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
+        <button
+          className="broadcast-button compact-button"
+          disabled={!canManageWorkflow}
+          onClick={() => createTask({ owner: 'larry', title: '新的客户跟进任务', source: '手动创建', next: '补充任务目标、负责人和截止时间。' })}
+        >
           <ClipboardList size={17} />
           新建任务
         </button>
@@ -1515,7 +1617,7 @@ function TaskBoard({ canManageWorkflow, runTaskAgent, running, taskOutputs }) {
         </section>
       )}
       <div className="task-board">
-        {taskColumns.map((column) => (
+        {groupedTasks.map((column) => (
           <section className="task-column" key={column.id}>
             <div className="task-column-head">
               <strong>{column.title}</strong>
@@ -1525,11 +1627,23 @@ function TaskBoard({ canManageWorkflow, runTaskAgent, running, taskOutputs }) {
               <article className="task-card" key={task.title}>
                 <h3>{task.title}</h3>
                 <div className="task-meta">
-                  <span>{task.tag}</span>
-                  <span>{task.owner}</span>
+                  <span>{task.tag || task.source}</span>
+                  <span>{getTeammateName(task.owner)}</span>
                   <span className={task.due === '已逾期' ? 'danger-text' : ''}>{task.due}</span>
                 </div>
+                <p>{task.next}</p>
                 <div className={`priority ${task.priority}`}>{priorityLabel(task.priority)}</div>
+                <div className="task-actions">
+                  {column.id !== 'progress' && column.id !== 'done' && (
+                    <button onClick={() => updateTask(task.id, { status: 'progress' })}>开始跟进</button>
+                  )}
+                  {column.id !== 'review' && column.id !== 'done' && (
+                    <button onClick={() => updateTask(task.id, { status: 'review' })}>等待反馈</button>
+                  )}
+                  {column.id !== 'done' && (
+                    <button onClick={() => updateTask(task.id, { status: 'done', result: '已完成，等待系统沉淀结果。' })}>已完成</button>
+                  )}
+                </div>
               </article>
             ))}
           </section>
@@ -1576,9 +1690,9 @@ function CustomerManager() {
   );
 }
 
-function QuoteBuilder({ canManageWorkflow, quoteOutputs, running, runQuoteAgent, setPage }) {
+function QuoteBuilder({ canManageWorkflow, quotes, quoteOutputs, running, runQuoteAgent, setPage }) {
   const latestOutput = quoteOutputs[0];
-  const quote = latestOutput?.quote;
+  const quote = latestOutput?.quote ?? quotes[0];
   return (
     <section className="business-page">
       <div className="business-heading">
@@ -1654,6 +1768,24 @@ function QuoteBuilder({ canManageWorkflow, quoteOutputs, running, runQuoteAgent,
           <button onClick={() => setPage('broadcast')}>广播给相关同事审核</button>
         </aside>
       </div>
+      {quotes.length > 0 && (
+        <section className="workflow-output-list">
+          <strong>报价草案记录</strong>
+          <div className="workflow-task-grid">
+            {quotes.slice(0, 4).map((item) => (
+              <article className="task-card" key={item.id}>
+                <h3>{item.customer}</h3>
+                <div className="task-meta">
+                  <span>{item.type}</span>
+                  <span>{item.approval}</span>
+                </div>
+                <p>{item.summary}</p>
+                <p>下一步：{item.next}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </section>
   );
 }
@@ -1960,6 +2092,15 @@ function getModel(id) {
 
 function getTeammateName(id) {
   return teammates.find((item) => item.id === id)?.name ?? id;
+}
+
+function mergeById(incoming = [], current = []) {
+  const seen = new Set();
+  return [...incoming, ...current].filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }
 
 function priorityLabel(priority) {

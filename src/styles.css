@@ -341,6 +341,19 @@ h2 {
   white-space: pre-wrap;
 }
 
+.message-task-button {
+  display: block;
+  width: fit-content;
+  min-height: 28px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .message.user {
   align-self: flex-end;
   color: #ffffff;
@@ -1250,6 +1263,23 @@ select {
 .priority {
   display: inline-flex;
   margin-top: 10px;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.task-actions button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 8px;
+  color: #344054;
+  background: #eef2f6;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .priority.high,

@@ -57,6 +57,17 @@ const defaultAgents = {
   kingsong: { id: 'kingsong', name: 'Kingsong_AI', ownerId: 'kingsong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true }
 };
 
+const defaultTasks = [
+  { id: 'task-research-budget', title: '联系华东有色金属研究院，确认设备升级预算', tag: '客户跟进', owner: 'luyang', collaborators: [], due: '5 天后', priority: 'high', status: 'todo', source: '客户管理', next: '确认预算、采购流程和是否需要材料试制切入。' },
+  { id: 'task-valve-asset', title: '整理 4 代核电阀门参数文档', tag: '专家资产', owner: 'gu', collaborators: ['kingsong'], due: '已逾期', priority: 'high', status: 'todo', source: '内部信息', next: '把关键参数、适用场景和报价风险整理成专家资产。' },
+  { id: 'task-vacuum-supplier', title: '对比 3 家真空熔炼设备供应商报价', tag: '设备选型', owner: 'kingsong', collaborators: [], due: '2 天后', priority: 'medium', status: 'todo', source: '报价准备', next: '对比配置、交付周期、质保范围和价格差异。' },
+  { id: 'task-aerospace-quote', title: '生成某航天厂高压阀门报价方案', tag: '报价方案', owner: 'larry', collaborators: ['gu'], due: '今天', priority: 'high', status: 'progress', source: '商机收藏', next: '补齐客户场景和关键设备参数，形成内部报价草案。' },
+  { id: 'task-alloy-market', title: '耐腐蚀合金材料价格走势分析', tag: '市场分析', owner: 'guihua', collaborators: [], due: '1 天后', priority: 'medium', status: 'progress', source: '外部商机', next: '判断价格波动对报价策略和客户采购时机的影响。' },
+  { id: 'task-gu-review', title: 'Gu 提交的阀门专家资产文档', tag: '专家资产', owner: 'gu', collaborators: [], due: '1 天后', priority: 'medium', status: 'review', source: '内部信息', next: '确认是否可发布为全员助理后台知识。' },
+  { id: 'task-aerospace-screening', title: '某航天厂需求初筛判断', tag: '商机跟进', owner: 'larry', collaborators: [], due: '已完成', priority: 'low', status: 'done', source: '商机雷达', next: '已完成需求初筛。' },
+  { id: 'task-industry-report', title: '全网行业线索汇总报告', tag: '市场信息', owner: 'xiaodong', collaborators: [], due: '已完成', priority: 'low', status: 'done', source: '外部机会 Agent', next: '已形成初版线索汇总。' }
+];
+
 const seed = {
   users: defaultUsers,
   agents: defaultAgents,
@@ -69,6 +80,8 @@ const seed = {
   conversations: {},
   systemAgentOutputs: { internal: [], external: [], task: [], quote: [] },
   generatedOpportunities: [],
+  tasks: defaultTasks,
+  quotes: [],
   savedOpportunities: { larry: ['aerospace-valve'] },
   conversationArchives: {},
   broadcasts: [
@@ -142,6 +155,8 @@ function ensureDefaultUsersAndAgents(store) {
   store.systemAgentOutputs ??= {};
   store.conversations ??= {};
   store.savedOpportunities ??= {};
+  store.tasks ??= [];
+  store.quotes ??= [];
   store.usage ??= {};
   store.auditLog ??= [];
 
@@ -180,6 +195,11 @@ function ensureDefaultUsersAndAgents(store) {
       store.usage[user.id] = emptyUsage();
       changed = true;
     }
+  }
+
+  if (!store.tasks.length) {
+    store.tasks = defaultTasks.map((task) => ({ ...task, createdAt: new Date().toISOString(), createdBy: 'system' }));
+    changed = true;
   }
 
   const addedUsers = defaultUsers.filter((user) => store.users.some((item) => item.id === user.id));
@@ -360,6 +380,8 @@ app.get('/api/state', requireAuth, async (req, res) => {
     conversations: { [req.session.userId]: store.conversations[req.session.userId] ?? [] },
     systemAgentOutputs: store.systemAgentOutputs ?? { internal: [], external: [] },
     generatedOpportunities: store.generatedOpportunities ?? [],
+    tasks: visibleTasksForSession(store, req.session),
+    quotes: visibleQuotesForSession(store, req.session),
     savedOpportunities: { [req.session.userId]: store.savedOpportunities[req.session.userId] ?? [] },
     broadcasts: userBroadcasts,
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
@@ -392,6 +414,13 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
     agentReply = generated.reply;
     llm = generated.llm;
   }
+  const createdTasks = deriveTasksFromMessage({
+    actorId: req.session.userId,
+    ownerId: id,
+    message: messageForContext,
+    reply: agentReply,
+    attachments: cleanAttachments
+  });
   store.conversations[id] ??= [];
   store.conversations[id].push({
     at: new Date().toISOString(),
@@ -403,9 +432,14 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: agentReply });
   const usage = calculateUsage(messageForContext, agentReply, agent.modelTier);
   store.usage[id] = mergeUsage(store.usage[id], usage);
+  if (createdTasks.length) {
+    store.tasks ??= [];
+    store.tasks.unshift(...createdTasks);
+    recordAudit(store, req.session.userId, 'task.auto_created_from_chat', { agentId: id, taskIds: createdTasks.map((task) => task.id) });
+  }
   recordAudit(store, req.session.userId, 'chat.recorded', { agentId: id, usage, llm });
   await writeStore(store);
-  res.json({ conversation: store.conversations[id], usage: store.usage[id], reply: agentReply, llm });
+  res.json({ conversation: store.conversations[id], usage: store.usage[id], reply: agentReply, llm, createdTasks });
 });
 
 app.post('/api/agents/:id/conversation/clear', requireAuth, async (req, res) => {
@@ -471,10 +505,11 @@ app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
     store.generatedOpportunities.unshift(generated.output.opportunity);
     store.generatedOpportunities = store.generatedOpportunities.slice(0, 18);
   }
+  const createdTasks = persistSystemAgentArtifacts(store, id, generated.output, req.session.userId);
   const broadcast = createSystemAgentBroadcast(store, req.session.userId, generated.output);
   recordAudit(store, req.session.userId, 'system-agent.run', { id, llm: generated.llm, broadcastId: broadcast?.id });
   await writeStore(store);
-  res.json({ output: generated.output, llm: generated.llm, systemAgent, broadcast });
+  res.json({ output: generated.output, llm: generated.llm, systemAgent, broadcast, createdTasks, quotes: store.quotes ?? [] });
 });
 
 app.post('/api/agents/:id/suspend', requireAuth, requireJamie, async (req, res) => {
@@ -578,6 +613,24 @@ app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
     store.broadcasts ??= [];
     store.broadcasts.unshift(discussionBroadcast);
   }
+  let feedbackTask = null;
+  if (['跟进中', '需要讨论'].includes(status)) {
+    feedbackTask = normalizeTaskInput(
+      {
+        title: `${status === '需要讨论' ? '讨论' : '跟进'}：${broadcast.title}`,
+        owner: req.session.userId,
+        collaborators: cleanDiscussWith,
+        due: status === '需要讨论' ? '今天' : '本周',
+        priority: status === '需要讨论' ? 'high' : 'medium',
+        tag: broadcast.type || '广播反馈',
+        source: '广播反馈',
+        next: note || broadcast.content
+      },
+      req.session.userId
+    );
+    store.tasks ??= [];
+    store.tasks.unshift(feedbackTask);
+  }
   recordAudit(store, req.session.userId, 'broadcast.feedback', {
     broadcastId: broadcast.id,
     status,
@@ -585,7 +638,69 @@ app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
     discussionBroadcastId: discussionBroadcast?.id
   });
   await writeStore(store);
-  res.json({ broadcast, discussionBroadcast });
+  res.json({ broadcast, discussionBroadcast, task: feedbackTask });
+});
+
+app.post('/api/tasks', requireAuth, async (req, res) => {
+  const store = await readStore();
+  const task = normalizeTaskInput(req.body ?? {}, req.session.userId);
+  store.tasks ??= [];
+  store.tasks.unshift(task);
+  recordAudit(store, req.session.userId, 'task.created', { taskId: task.id, owner: task.owner });
+  await writeStore(store);
+  res.status(201).json({ task, tasks: visibleTasksForSession(store, req.session) });
+});
+
+app.post('/api/tasks/from-message', requireAuth, async (req, res) => {
+  const { ownerId = req.session.userId, text = '', source = '个人助理对话' } = req.body ?? {};
+  if (req.session.role !== 'super_admin' && req.session.userId !== ownerId) return res.status(403).json({ error: 'private_workspace' });
+  const store = await readStore();
+  const task = normalizeTaskInput({
+    title: inferTaskTitle(text),
+    owner: ownerId,
+    priority: /报价|客户|今天|紧急|尽快/.test(text) ? 'high' : 'medium',
+    due: /今天|紧急|尽快/.test(text) ? '今天' : '本周',
+    tag: /报价/.test(text) ? '报价准备' : /客户|商机/.test(text) ? '客户跟进' : '对话行动',
+    source,
+    next: truncateText(String(text).replace(/\s+/g, ' ').trim(), 180) || '根据这段对话继续推进下一步。'
+  }, req.session.userId);
+  store.tasks ??= [];
+  store.tasks.unshift(task);
+  recordAudit(store, req.session.userId, 'task.created_from_message', { taskId: task.id, owner: task.owner });
+  await writeStore(store);
+  res.status(201).json({ task, tasks: visibleTasksForSession(store, req.session) });
+});
+
+app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
+  const store = await readStore();
+  const task = (store.tasks ?? []).find((item) => item.id === req.params.id);
+  if (!task) return res.status(404).json({ error: 'task_not_found' });
+  if (!canEditTask(req.session, task)) return res.status(403).json({ error: 'task_forbidden' });
+  const previousStatus = task.status;
+  const allowed = ['title', 'tag', 'owner', 'due', 'priority', 'status', 'next', 'result'];
+  for (const key of allowed) {
+    if (req.body?.[key] !== undefined) task[key] = req.body[key];
+  }
+  task.updatedAt = new Date().toISOString();
+  task.updatedBy = req.session.userId;
+  if (task.status === 'done' && previousStatus !== 'done') {
+    task.completedAt = new Date().toISOString();
+    store.systemAgentOutputs ??= {};
+    store.systemAgentOutputs.internal ??= [];
+    store.systemAgentOutputs.internal.unshift({
+      id: `task-learning-${Date.now()}`,
+      at: new Date().toISOString(),
+      title: `任务完成复盘：${task.title}`,
+      text: task.result || task.next || '任务已完成，等待后续复盘。',
+      source: '任务看板 / 完成反馈',
+      asset: '任务结果学习.md',
+      learning: `任务「${task.title}」完成，系统将其结果作为客户推进、报价或协作经验沉淀。`
+    });
+    store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
+  }
+  recordAudit(store, req.session.userId, 'task.updated', { taskId: task.id, status: task.status });
+  await writeStore(store);
+  res.json({ task, tasks: visibleTasksForSession(store, req.session), systemAgentOutputs: store.systemAgentOutputs });
 });
 
 app.post('/api/llm/proxy', requireAuth, async (req, res) => {
@@ -1094,6 +1209,133 @@ function fallbackQuoteDraft() {
     next: 'Larry 牵头补齐客户需求，报价 Agent 生成内部草案后提交 Jamie 审批。',
     approval: '需要 Jamie 审批'
   };
+}
+
+function visibleTasksForSession(store, session) {
+  const tasks = store.tasks ?? [];
+  if (isWorkflowOwner(session)) return tasks;
+  return tasks.filter((task) => task.owner === session.userId || (task.collaborators ?? []).includes(session.userId));
+}
+
+function visibleQuotesForSession(store, session) {
+  const quotes = store.quotes ?? [];
+  if (isWorkflowOwner(session)) return quotes;
+  return quotes.filter((quote) => quote.owner === session.userId || (quote.collaborators ?? []).includes(session.userId));
+}
+
+function canEditTask(session, task) {
+  return isWorkflowOwner(session) || task.owner === session.userId || (task.collaborators ?? []).includes(session.userId);
+}
+
+function normalizeTaskInput(input, actorId) {
+  const owner = String(input.owner || actorId).toLowerCase();
+  return {
+    id: input.id || `task-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    title: String(input.title || '新的跟进任务').slice(0, 160),
+    tag: String(input.tag || input.source || '工作任务').slice(0, 40),
+    owner,
+    collaborators: Array.isArray(input.collaborators) ? input.collaborators.map((id) => String(id).toLowerCase()) : [],
+    due: String(input.due || '待定').slice(0, 40),
+    priority: ['high', 'medium', 'low'].includes(input.priority) ? input.priority : 'medium',
+    status: ['todo', 'progress', 'review', 'done', 'blocked', 'cancelled'].includes(input.status) ? input.status : 'todo',
+    source: String(input.source || '手动创建').slice(0, 80),
+    next: String(input.next || '确认下一步动作。').slice(0, 500),
+    result: input.result ? String(input.result).slice(0, 500) : '',
+    relatedQuoteId: input.relatedQuoteId || '',
+    relatedOpportunityId: input.relatedOpportunityId || '',
+    createdAt: new Date().toISOString(),
+    createdBy: actorId
+  };
+}
+
+function deriveTasksFromMessage({ actorId, ownerId, message, reply, attachments = [] }) {
+  const text = `${message}\n${reply}`;
+  const hasAttachment = attachments.length > 0;
+  const actionable = /会议|纪要|访谈|客户|报价|商机|跟进|确认|整理|准备|参数|方案|预算|采购/.test(text);
+  if (!actionable && !hasAttachment) return [];
+  const firstAttachment = attachments[0];
+  const source = hasAttachment ? `附件：${firstAttachment.name}` : '个人助理对话';
+  const title = hasAttachment
+    ? `处理并拆解 ${firstAttachment.name}`
+    : inferTaskTitle(text);
+  return [
+    normalizeTaskInput(
+      {
+        title,
+        owner: ownerId,
+        priority: /报价|客户|预算|采购|今天|紧急/.test(text) ? 'high' : 'medium',
+        due: /今天|紧急/.test(text) ? '今天' : '本周',
+        tag: /报价/.test(text) ? '报价准备' : hasAttachment ? '纪要拆解' : /客户|商机/.test(text) ? '客户跟进' : '对话行动',
+        source,
+        next: hasAttachment
+          ? '从附件中提取分工、客户线索、报价需求和需要补充的信息。'
+          : truncateText(String(reply || message).replace(/\s+/g, ' ').trim(), 180)
+      },
+      actorId
+    )
+  ];
+}
+
+function inferTaskTitle(text = '') {
+  const clean = String(text).replace(/\s+/g, ' ').trim();
+  if (/报价/.test(clean)) return '推进报价准备并补齐关键参数';
+  if (/客户|商机/.test(clean)) return '跟进客户线索并验证商机价值';
+  if (/会议|纪要|访谈/.test(clean)) return '拆解会议纪要并形成行动项';
+  if (/材料/.test(clean)) return '整理材料需求和供应风险';
+  if (/设备|参数/.test(clean)) return '确认设备参数和交付风险';
+  return truncateText(clean, 48) || '根据对话生成下一步任务';
+}
+
+function persistSystemAgentArtifacts(store, id, output, actorId) {
+  const createdTasks = [];
+  if (id === 'task' && Array.isArray(output.tasks)) {
+    for (const task of output.tasks) {
+      createdTasks.push(normalizeTaskInput({
+        title: task.title,
+        owner: task.owner || WORKFLOW_OWNER_ID,
+        priority: task.priority,
+        due: task.due,
+        tag: task.source || '任务 Agent',
+        source: task.source || '任务 Agent',
+        next: task.next
+      }, actorId));
+    }
+  }
+  if (id === 'quote' && output.quote) {
+    const quote = {
+      id: `quote-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      at: new Date().toISOString(),
+      owner: WORKFLOW_OWNER_ID,
+      customer: output.quote.customer || '待确认客户',
+      type: output.quote.type || '打包方案',
+      summary: output.quote.summary || output.text || '',
+      missing: Array.isArray(output.quote.missing) ? output.quote.missing : [],
+      risk: Array.isArray(output.quote.risk) ? output.quote.risk : [],
+      next: output.quote.next || '补齐报价参数并形成内部草案。',
+      approval: output.quote.approval || '内部确认',
+      createdBy: actorId
+    };
+    store.quotes ??= [];
+    store.quotes.unshift(quote);
+    store.quotes = store.quotes.slice(0, 20);
+    createdTasks.push(
+      normalizeTaskInput({
+        title: `补齐报价参数：${quote.customer}`,
+        owner: WORKFLOW_OWNER_ID,
+        priority: 'high',
+        due: '本周',
+        tag: '报价准备',
+        source: '报价 Agent',
+        next: [quote.next, quote.missing.length ? `缺失：${quote.missing.join('、')}` : ''].filter(Boolean).join('\n'),
+        relatedQuoteId: quote.id
+      }, actorId)
+    );
+  }
+  if (createdTasks.length) {
+    store.tasks ??= [];
+    store.tasks.unshift(...createdTasks);
+  }
+  return createdTasks;
 }
 
 function fallbackSystemAgentOutput(id, detail = '') {
