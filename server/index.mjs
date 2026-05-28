@@ -21,7 +21,7 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
-const workflowSystemAgentIds = new Set(['task', 'quote']);
+const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
 const allowedOrigins = (process.env.APP_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,https://timeconnector.net,https://www.timeconnector.net')
   .split(',')
   .map((origin) => origin.trim())
@@ -75,13 +75,20 @@ const seed = {
     internal: { name: '内部信息 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
     external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
     task: { name: '任务看板 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID },
-    quote: { name: '报价 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID }
+    quote: { name: '报价 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID },
+    customer: { name: '客户管理 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID }
   },
   conversations: {},
-  systemAgentOutputs: { internal: [], external: [], task: [], quote: [] },
+  systemAgentOutputs: { internal: [], external: [], task: [], quote: [], customer: [] },
   generatedOpportunities: [],
   tasks: defaultTasks,
   quotes: [],
+  customers: [
+    { id: 'customer-east-research', name: '华东有色金属研究院', type: '科研机构', stage: '洽谈中', owner: 'luyang', contact: '张主任', phone: '138****8888', last: '5 天前', next: '确认设备升级预算和材料试制需求。' },
+    { id: 'customer-sh-aerospace', name: '上海航天设备制造', type: '航天军工', stage: '报价阶段', owner: 'larry', contact: '李工', phone: '139****6666', last: '今天', next: '补齐高压阀门参数和交付周期。' },
+    { id: 'customer-gz-lab', name: '广州高校材料实验室', type: '高校科研', stage: '商务谈判', owner: 'guihua', contact: '王教授', phone: '137****5555', last: '2 天前', next: '判断是否用材料试制切入设备方案。' },
+    { id: 'customer-bj-semi', name: '北京半导体材料公司', type: '半导体', stage: '成交', owner: 'xiaodong', contact: '赵经理', phone: '136****4444', last: '1 周前', next: '维护复购和设备升级机会。' }
+  ],
   savedOpportunities: { larry: ['aerospace-valve'] },
   conversationArchives: {},
   broadcasts: [
@@ -157,6 +164,7 @@ function ensureDefaultUsersAndAgents(store) {
   store.savedOpportunities ??= {};
   store.tasks ??= [];
   store.quotes ??= [];
+  store.customers ??= [];
   store.usage ??= {};
   store.auditLog ??= [];
 
@@ -199,6 +207,10 @@ function ensureDefaultUsersAndAgents(store) {
 
   if (!store.tasks.length) {
     store.tasks = defaultTasks.map((task) => ({ ...task, createdAt: new Date().toISOString(), createdBy: 'system' }));
+    changed = true;
+  }
+  if (!store.customers.length && seed.customers?.length) {
+    store.customers = seed.customers.map((customer) => ({ ...customer, createdAt: new Date().toISOString(), createdBy: 'system' }));
     changed = true;
   }
 
@@ -386,6 +398,7 @@ app.get('/api/state', requireAuth, async (req, res) => {
     generatedOpportunities: store.generatedOpportunities ?? [],
     tasks: visibleTasksForSession(store, req.session),
     quotes: visibleQuotesForSession(store, req.session),
+    customers: visibleCustomersForSession(store, req.session),
     savedOpportunities: { [req.session.userId]: store.savedOpportunities[req.session.userId] ?? [] },
     broadcasts: userBroadcasts,
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
@@ -514,7 +527,7 @@ app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   const broadcast = createSystemAgentBroadcast(store, req.session.userId, generated.output);
   recordAudit(store, req.session.userId, 'system-agent.run', { id, llm: generated.llm, broadcastId: broadcast?.id });
   await writeStore(store);
-  res.json({ output: generated.output, llm: generated.llm, systemAgent, broadcast, createdTasks, quotes: store.quotes ?? [] });
+  res.json({ output: generated.output, llm: generated.llm, systemAgent, broadcast, createdTasks, quotes: store.quotes ?? [], customers: store.customers ?? [] });
 });
 
 app.post('/api/agents/:id/suspend', requireAuth, requireJamie, async (req, res) => {
@@ -1087,6 +1100,15 @@ function getSystemAgentSpec(id) {
       'broadcast 写给 Larry 和相关同事，推动补齐参数，而不是把报价发给客户。'
     ].join('\n');
   }
+  if (id === 'customer') {
+    return [
+      '你是客户管理 Agent，目标是提高客户管理效率，把客户信息、阶段、跟进动作和商机价值整理清楚。',
+      '你可以读取团队对话、任务、报价草案、商机收藏和广播反馈，但输出不要泄露私密聊天原文，只输出客户卡片、阶段判断和跟进建议。',
+      '重点提取：客户名称、客户类型、联系人、当前阶段、负责人、最近动作、下一步、是否需要报价、是否存在大商机。',
+      '请只返回 JSON：{"title":"...","text":"...","learning":"...","customers":[{"name":"...","type":"科研机构|航天军工|高校科研|半导体|企业客户|未知","stage":"线索|洽谈中|报价阶段|商务谈判|成交|维护","owner":"larry|gu|xiaodong|heli|guihua|zhiping|luyang|kingsong","contact":"...","phone":"...","last":"今天|本周|待确认","next":"...","priority":"high|medium|low"}],"broadcast":{"title":"...","content":"..."}}。',
+      '如果发现客户需要报价或技术确认，请把 next 写成清晰动作，系统会生成客户跟进任务。'
+    ].join('\n');
+  }
   return [
     '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
     '不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径，并说明验证路径。',
@@ -1126,6 +1148,22 @@ function normalizeSystemAgentOutput(id, data, raw) {
         type: '报价方案',
         title: data.title || '报价 Agent 需要补充报价信息',
         action: data.text || '请 Larry 牵头确认客户需求、设备参数、材料体系和是否需要 Jamie 审批。'
+      }),
+      raw
+    };
+  }
+  if (id === 'customer') {
+    return {
+      id: `customer-${Date.now()}`,
+      at: new Date().toISOString(),
+      title: data.title || '客户管理 Agent 已整理客户跟进建议',
+      text: data.text || '客户管理 Agent 已从信息流中提取客户阶段、负责人和下一步动作。',
+      learning: data.learning || '客户管理 Agent 学习到：客户管理需要把客户阶段、报价需求和下一步跟进动作连到任务看板。',
+      customers: Array.isArray(data.customers) ? data.customers.slice(0, 8) : fallbackCustomerInsights(),
+      broadcast: normalizeSystemBroadcast(data.broadcast, {
+        type: '客户跟进',
+        title: data.title || '客户管理 Agent 发现新的客户跟进动作',
+        action: data.text || '请相关同事确认客户阶段、负责人和下一步动作。'
       }),
       raw
     };
@@ -1226,6 +1264,12 @@ function visibleQuotesForSession(store, session) {
   const quotes = store.quotes ?? [];
   if (isWorkflowOwner(session)) return quotes;
   return quotes.filter((quote) => quote.owner === session.userId || (quote.collaborators ?? []).includes(session.userId));
+}
+
+function visibleCustomersForSession(store, session) {
+  const customers = store.customers ?? [];
+  if (isWorkflowOwner(session)) return customers;
+  return customers.filter((customer) => customer.owner === session.userId || (customer.collaborators ?? []).includes(session.userId));
 }
 
 function canEditTask(session, task) {
@@ -1336,11 +1380,70 @@ function persistSystemAgentArtifacts(store, id, output, actorId) {
       }, actorId)
     );
   }
+  if (id === 'customer' && Array.isArray(output.customers)) {
+    store.customers ??= [];
+    for (const customer of output.customers.slice(0, 8)) {
+      const normalizedCustomer = normalizeCustomerInsight(customer, actorId);
+      const existing = store.customers.find((item) => item.name === normalizedCustomer.name);
+      if (existing) {
+        Object.assign(existing, normalizedCustomer, { id: existing.id, updatedAt: new Date().toISOString() });
+      } else {
+        store.customers.unshift(normalizedCustomer);
+      }
+      createdTasks.push(
+        normalizeTaskInput({
+          title: `跟进客户：${normalizedCustomer.name}`,
+          owner: normalizedCustomer.owner || WORKFLOW_OWNER_ID,
+          priority: normalizedCustomer.priority || 'medium',
+          due: normalizedCustomer.priority === 'high' ? '今天' : '本周',
+          tag: '客户跟进',
+          source: '客户管理 Agent',
+          next: normalizedCustomer.next || '确认客户阶段和下一步动作。'
+        }, actorId)
+      );
+    }
+    store.customers = store.customers.slice(0, 50);
+  }
   if (createdTasks.length) {
     store.tasks ??= [];
     store.tasks.unshift(...createdTasks);
   }
   return createdTasks;
+}
+
+function normalizeCustomerInsight(customer, actorId) {
+  const name = String(customer.name || '待确认客户').slice(0, 120);
+  return {
+    id: customer.id || `customer-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    name,
+    type: String(customer.type || '未知').slice(0, 40),
+    stage: String(customer.stage || '线索').slice(0, 40),
+    owner: String(customer.owner || WORKFLOW_OWNER_ID).toLowerCase(),
+    collaborators: Array.isArray(customer.collaborators) ? customer.collaborators.map((id) => String(id).toLowerCase()) : [],
+    contact: String(customer.contact || '待确认').slice(0, 80),
+    phone: String(customer.phone || '待确认').slice(0, 40),
+    last: String(customer.last || '待确认').slice(0, 40),
+    next: String(customer.next || '确认客户需求和下一步动作。').slice(0, 500),
+    priority: ['high', 'medium', 'low'].includes(customer.priority) ? customer.priority : 'medium',
+    createdAt: new Date().toISOString(),
+    createdBy: actorId
+  };
+}
+
+function fallbackCustomerInsights() {
+  return [
+    {
+      name: '待验证材料实验室客户',
+      type: '科研机构',
+      stage: '线索',
+      owner: 'luyang',
+      contact: '待确认',
+      phone: '待确认',
+      last: '待确认',
+      next: '确认是否存在悬浮真空熔炼设备升级或材料试制需求。',
+      priority: 'medium'
+    }
+  ];
 }
 
 function fallbackSystemAgentOutput(id, detail = '') {
@@ -1371,6 +1474,23 @@ function fallbackSystemAgentOutput(id, detail = '') {
         broadcast: {
           title: '报价 Agent 提醒：补齐报价参数',
           content: '请 Larry 牵头补齐客户需求、设备/材料参数和交付边界；正式报价前提交 Jamie 审批。'
+        }
+      },
+      detail
+    );
+  }
+  if (id === 'customer') {
+    return normalizeSystemAgentOutput(
+      'customer',
+      {
+        title: '客户管理 Agent：客户跟进建议',
+        text: `建议先把客户按线索、洽谈中、报价阶段、商务谈判、成交维护分层，并为每个客户生成下一步动作。${detail}`,
+        learning: '客户管理 Agent 将持续学习客户阶段、报价需求和商机价值之间的关系。',
+        customers: fallbackCustomerInsights(),
+        broadcast: {
+          type: '客户跟进',
+          title: '客户管理 Agent 提醒：请补齐客户阶段和下一步',
+          content: '请相关同事补齐客户联系人、当前阶段、是否需要报价和下一步跟进动作。'
         }
       },
       detail

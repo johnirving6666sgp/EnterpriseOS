@@ -105,6 +105,14 @@ const systemAgents = [
     defaultProvider: 'openrouter',
     defaultModel: 'openrouter/openai/gpt-4.1-mini',
     reason: '报价需要稳妥、结构化和可审批，默认 GPT-4.1 mini；关键客户报价可升 GPT-4.1。'
+  },
+  {
+    id: 'customer',
+    name: '客户管理 Agent',
+    job: '整理客户阶段、负责人、联系人和下一步跟进动作，协助全员提高客户管理效率',
+    defaultProvider: 'openrouter',
+    defaultModel: 'openrouter/openai/gpt-4.1-mini',
+    reason: '客户管理需要频繁整理和跟进，默认 GPT-4.1 mini；复杂客户画像可升 GPT-4.1。'
   }
 ];
 
@@ -136,7 +144,8 @@ const recommendedSystemRoutes = {
   internal: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   task: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-  quote: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
+  quote: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  customer: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
 };
 
 const baseMessages = {
@@ -287,10 +296,11 @@ function EnterpriseApp({ auth, onLogout }) {
   const [listening, setListening] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
   const [broadcasted, setBroadcasted] = useState([]);
-  const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [], task: [], quote: [] });
+  const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [], task: [], quote: [], customer: [] });
   const [generatedOpportunities, setGeneratedOpportunities] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [customers, setCustomers] = useState(customerSeed);
   const [systemRunning, setSystemRunning] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
@@ -392,10 +402,11 @@ function EnterpriseApp({ auth, onLogout }) {
         const agentEntries = Object.entries(state.agents ?? {});
 
         setMessagesByUser({ ...baseMessages, ...(state.conversations ?? {}) });
-        setSystemOutputs({ internal: [], external: [], task: [], quote: [], ...(state.systemAgentOutputs ?? {}) });
+        setSystemOutputs({ internal: [], external: [], task: [], quote: [], customer: [], ...(state.systemAgentOutputs ?? {}) });
         setGeneratedOpportunities(state.generatedOpportunities ?? []);
         setTasks(state.tasks ?? []);
         setQuotes(state.quotes ?? []);
+        setCustomers(state.customers ?? customerSeed);
         setSavedByUser(state.savedOpportunities ?? {});
         setBroadcasts(state.broadcasts ?? []);
         setWorkflowOwnerId(state.workflowOwnerId ?? 'larry');
@@ -778,6 +789,9 @@ function EnterpriseApp({ auth, onLogout }) {
         if (payload.quotes?.length) {
           setQuotes(payload.quotes);
         }
+        if (payload.customers?.length) {
+          setCustomers(payload.customers);
+        }
         setSystemOutputs((current) => ({
           ...current,
           [id]: [payload.output, ...(current[id] ?? [])].slice(0, 12)
@@ -979,7 +993,16 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'crm' && <CustomerManager />}
+      {visiblePage === 'crm' && (
+        <CustomerManager
+          canManageWorkflow={canManageWorkflow}
+          customers={customers}
+          customerOutputs={systemOutputs.customer ?? []}
+          running={systemRunning.customer}
+          runCustomerAgent={() => runSystemAgent('customer')}
+          setPage={setPage}
+        />
+      )}
 
       {visiblePage === 'quote' && (
         <QuoteBuilder
@@ -1655,35 +1678,68 @@ function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks
   );
 }
 
-function CustomerManager() {
+function CustomerManager({ canManageWorkflow, customers, customerOutputs, running, runCustomerAgent, setPage }) {
+  const latestOutput = customerOutputs[0];
+  const latestCustomers = latestOutput?.customers ?? [];
   return (
     <section className="business-page">
       <div className="business-heading">
         <div>
           <h2>客户管理</h2>
-          <p>把客户、联系人、阶段、上次跟进和报价入口集中管理。</p>
+          <p>把客户、联系人、阶段、上次跟进和下一步动作集中管理。</p>
         </div>
-        <button className="broadcast-button compact-button">
+        <button className="broadcast-button compact-button" disabled={!canManageWorkflow} onClick={runCustomerAgent}>
           <Users size={17} />
-          添加客户
+          运行客户 Agent
         </button>
       </div>
+      <WorkflowAgentPanel
+        canManageWorkflow={canManageWorkflow}
+        icon={<Users size={18} />}
+        title="客户管理 Agent"
+        description="从对话、任务、报价草案和商机收藏里整理客户阶段、负责人、联系人和下一步跟进动作。"
+        running={running}
+        runLabel="运行客户 Agent"
+        runningLabel="客户 Agent 整理中..."
+        onRun={runCustomerAgent}
+        latestTitle={latestOutput?.title}
+        latestText={latestOutput?.text || latestOutput?.learning}
+      />
+      {latestCustomers.length > 0 && (
+        <section className="workflow-output-list">
+          <strong>客户 Agent 最新建议</strong>
+          <div className="workflow-task-grid">
+            {latestCustomers.map((customer, index) => (
+              <article className="task-card" key={`${customer.name}-${index}`}>
+                <h3>{customer.name}</h3>
+                <div className="task-meta">
+                  <span>{customer.stage}</span>
+                  <span>{getTeammateName(customer.owner)}</span>
+                  <span>{customer.priority || 'medium'}</span>
+                </div>
+                <p>{customer.next}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="customer-grid">
-        {customerSeed.map((customer) => (
+        {customers.map((customer) => (
           <article className="customer-card" key={customer.name}>
             <div className="customer-head">
               <div className="customer-avatar">{customer.name[0]}</div>
               <div>
                 <h3>{customer.name}</h3>
-                <span>{customer.type}</span>
+                <span>{customer.type} · {getTeammateName(customer.owner)}</span>
               </div>
             </div>
             <div className="stage-pill">{customer.stage}</div>
             <p>联系人：{customer.contact} · {customer.phone}</p>
             <p>上次联系：{customer.last}</p>
+            <p>下一步：{customer.next}</p>
             <div className="customer-actions">
-              <button>跟进</button>
-              <button>报价</button>
+              <button onClick={() => setPage('tasks')}>跟进</button>
+              <button onClick={() => setPage('quote')}>报价</button>
             </div>
           </article>
         ))}
