@@ -833,7 +833,6 @@ function EnterpriseApp({ auth, onLogout }) {
             </button>
           )}
           <span className="login-chip">当前登录：{auth.user.name}</span>
-          {isWorkflowOwner && <span className="login-chip workflow-owner-chip">任务/报价负责人</span>}
           <button onClick={onLogout}>退出登录</button>
         </nav>
       </header>
@@ -885,11 +884,9 @@ function EnterpriseApp({ auth, onLogout }) {
       {visiblePage === 'tasks' && (
         <TaskBoard
           canManageWorkflow={canManageWorkflow}
-          isWorkflowOwner={isWorkflowOwner}
           runTaskAgent={() => runSystemAgent('task')}
           running={systemRunning.task}
           taskOutputs={systemOutputs.task ?? []}
-          workflowOwnerName={getTeammateName(workflowOwnerId)}
         />
       )}
 
@@ -898,12 +895,10 @@ function EnterpriseApp({ auth, onLogout }) {
       {visiblePage === 'quote' && (
         <QuoteBuilder
           canManageWorkflow={canManageWorkflow}
-          isWorkflowOwner={isWorkflowOwner}
           quoteOutputs={systemOutputs.quote ?? []}
           running={systemRunning.quote}
           runQuoteAgent={() => runSystemAgent('quote')}
           setPage={setPage}
-          workflowOwnerName={getTeammateName(workflowOwnerId)}
         />
       )}
 
@@ -1473,7 +1468,7 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   );
 }
 
-function TaskBoard({ canManageWorkflow, isWorkflowOwner, runTaskAgent, running, taskOutputs, workflowOwnerName }) {
+function TaskBoard({ canManageWorkflow, runTaskAgent, running, taskOutputs }) {
   const latestOutput = taskOutputs[0];
   const extractedTasks = latestOutput?.tasks ?? [];
   return (
@@ -1481,7 +1476,7 @@ function TaskBoard({ canManageWorkflow, isWorkflowOwner, runTaskAgent, running, 
       <div className="business-heading">
         <div>
           <h2>任务看板</h2>
-          <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。流程负责人：{workflowOwnerName}。</p>
+          <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。</p>
         </div>
         <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
           <ClipboardList size={17} />
@@ -1491,9 +1486,8 @@ function TaskBoard({ canManageWorkflow, isWorkflowOwner, runTaskAgent, running, 
       <WorkflowAgentPanel
         canManageWorkflow={canManageWorkflow}
         icon={<ClipboardList size={18} />}
-        isWorkflowOwner={isWorkflowOwner}
         title="任务看板 Agent"
-        description="Larry 负责运行和校准任务 Agent：从聊天、会议纪要、广播反馈和商机收藏里提取任务，但不查看其他同事私密聊天原文。"
+        description="从聊天、会议纪要、广播反馈和商机收藏里提取任务，形成负责人、优先级、截止时间和下一步动作。"
         running={running}
         runLabel="运行任务 Agent"
         runningLabel="任务 Agent 提取中..."
@@ -1582,7 +1576,7 @@ function CustomerManager() {
   );
 }
 
-function QuoteBuilder({ canManageWorkflow, isWorkflowOwner, quoteOutputs, running, runQuoteAgent, setPage, workflowOwnerName }) {
+function QuoteBuilder({ canManageWorkflow, quoteOutputs, running, runQuoteAgent, setPage }) {
   const latestOutput = quoteOutputs[0];
   const quote = latestOutput?.quote;
   return (
@@ -1590,7 +1584,7 @@ function QuoteBuilder({ canManageWorkflow, isWorkflowOwner, quoteOutputs, runnin
       <div className="business-heading">
         <div>
           <h2>报价方案</h2>
-          <p>把客户需求、设备参数和历史报价组合成内部报价草案。流程负责人：{workflowOwnerName}。</p>
+          <p>把客户需求、设备参数和历史报价组合成内部报价草案。</p>
         </div>
         <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
           <FileText size={17} />
@@ -1600,9 +1594,8 @@ function QuoteBuilder({ canManageWorkflow, isWorkflowOwner, quoteOutputs, runnin
       <WorkflowAgentPanel
         canManageWorkflow={canManageWorkflow}
         icon={<CircleDollarSign size={18} />}
-        isWorkflowOwner={isWorkflowOwner}
         title="报价 Agent"
-        description="Larry 负责运行报价 Agent：它理解设备、熔炼服务、材料试制和工艺验证的报价结构，输出内部草案，正式报价仍需 Jamie 审批。"
+        description="理解设备、熔炼服务、材料试制和工艺验证的报价结构，输出内部报价草案、缺失参数和风险提醒。"
         running={running}
         runLabel="运行报价 Agent"
         runningLabel="报价 Agent 分析中..."
@@ -1669,7 +1662,6 @@ function WorkflowAgentPanel({
   canManageWorkflow,
   description,
   icon,
-  isWorkflowOwner,
   latestText,
   latestTitle,
   onRun,
@@ -1683,7 +1675,6 @@ function WorkflowAgentPanel({
       <div>
         <strong>{icon}{title}</strong>
         <p>{description}</p>
-        <span>{isWorkflowOwner ? '你现在拥有这个流程的日常管理权。' : 'Jamie 保留最高权限；Larry 负责日常推进。'}</span>
       </div>
       <button className="agent-run-button" onClick={onRun} disabled={!canManageWorkflow || running}>
         {running ? runningLabel : runLabel}
