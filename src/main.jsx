@@ -126,7 +126,7 @@ const agentResponsibilityRules = [
 ];
 
 const teammates = [
-  { id: 'jamie', name: 'Jamie', agent: 'Jamie_AI', model: 'strong', role: '小团队试用负责人' },
+  { id: 'jamie', name: 'Jamie', agent: 'Jamie_AI', model: 'strong', role: 'Agent 成长与效率教练' },
   { id: 'larry', name: 'Larry', agent: 'Larry_AI', model: 'balanced', role: '任务/报价流程负责人' },
   { id: 'gu', name: 'Gu', agent: 'Gu_AI', model: 'strong', role: '工艺与设备参数' },
   { id: 'xiaodong', name: 'Xiaodong', agent: 'Xiaodong_AI', model: 'balanced', role: '项目协作' },
@@ -158,7 +158,7 @@ const recommendedSystemRoutes = {
 };
 
 const baseMessages = {
-  jamie: [{ from: 'agent', text: '我负责帮你观察这个小团队试用：权限、模型成本、同事反馈和专家资产。' }],
+  jamie: [{ from: 'agent', text: '我负责评估各个 Agent 是否真正帮到同事，发现低效回答和流程卡点，推动它们持续成长，给团队提供更好的帮助。' }],
   larry: [
     { from: 'agent', text: 'Larry，我会保留你的客户现场上下文，并帮你把收藏商机转成报价和跟进方案。' },
     { from: 'user', text: '某航天厂可能急需高压阀门，我想先判断是否值得跟进。' }
@@ -2767,6 +2767,21 @@ function getWorkspaceDailyLine(coworker) {
 
 function makeReply(text, coworker, model, savedCards = [], conversationContext = []) {
   const lastUserQuestion = [...conversationContext].reverse().find((message) => message.from === 'user')?.text ?? '';
+  if (coworker.id === 'jamie') {
+    if (/效率|成长|提升|评估|agent|Agent|助手|改进|怎么/.test(text)) {
+      return [
+        '我会把 Jamie_AI 的定位放在“Agent 成长与效率教练”，不是普通秘书，也不是只看权限成本。',
+        '我会重点看六类 Agent 是否真的发挥作用：个人助理、外部机会、客户管理、任务看板、报价、内部信息。',
+        '评估方式可以先用 4 个指标：',
+        '1. 同事的问题是否被直接解决，而不是只被记录。',
+        '2. 对话是否转成了任务、客户阶段、报价依据或商机动作。',
+        '3. 同事点击“有用 / 不准 / 需更具体”的反馈比例。',
+        '4. 任务、报价和客户跟进是否最终闭环，并沉淀成可复用经验。',
+        '下一步我建议建立一张 Agent 体检表：每个 Agent 每周输出“表现、短板、改进动作、验证指标”。'
+      ].join('\n\n');
+    }
+    return '收到。作为 Jamie_AI，我会优先评估各 Agent 的效率、回复质量、任务转化、同事反馈和知识沉淀，推动它们持续成长，让团队获得更好的帮助。';
+  }
   const asksForBetterAnswer = /不对|不正确|没回答|重新回答|换个回答|什么意思|没听懂|不满意/.test(text);
   if (asksForBetterAnswer) {
     return [

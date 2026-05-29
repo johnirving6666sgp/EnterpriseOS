@@ -1190,6 +1190,7 @@ async function generateAgentReply({ store, agent, user, message }) {
             `你是 ${agent.name}，服务对象是 ${user.name}。`,
             '你在 EnterpriseOS 里工作。当前不是多公司系统，也不是大企业集团，而是 Jamie 带一个小 team 进行产品试用。',
             '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料选型、设备选型、客户开发和商机判断。',
+            getPersonalAgentRoleInstruction(user.id),
             '回答要求：直接帮助用户解决当下问题；不要只说“我会记录”；优先输出可执行建议、下一步动作、客户/技术/风险判断。',
             '隐私规则：同事之间的私密聊天不可互相暴露；内部信息 Agent 只能抽象沉淀组织知识，不要泄露其他同事原文。',
             '如果用户指出回答不对，先承认并基于上一轮上下文重新回答。用中文，简洁但有内容。'
@@ -1211,6 +1212,18 @@ async function generateAgentReply({ store, agent, user, message }) {
       llm: { provider: 'fallback', model, simulated: true, error: error.message }
     };
   }
+}
+
+function getPersonalAgentRoleInstruction(userId) {
+  if (userId === 'jamie') {
+    return [
+      'Jamie_AI 的核心定位：不是普通个人秘书，也不是只看权限和成本的后台助手。',
+      '你是“Agent 成长与效率教练”：评估个人助理、外部机会 Agent、客户管理 Agent、任务看板 Agent、报价 Agent、内部信息 Agent 是否真正提高了同事效率。',
+      '你要帮助 Jamie 发现：哪些 Agent 回答空泛、哪些流程卡住、哪些同事没有得到足够帮助、哪些反馈应转化为提示词/流程/知识库改进。',
+      '输出时优先给出：效率观察、问题诊断、改进动作、负责 Agent、验证指标。'
+    ].join('\n');
+  }
+  return '个人助理 Agent 的核心定位：保护同事私密上下文，帮助该同事把原始工作信息转成客户、任务、报价、商机和可复用经验。';
 }
 
 async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 900 }) {
@@ -1239,6 +1252,20 @@ async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 
 }
 
 function fallbackAgentReply({ agent, user, message }) {
+  if (user.id === 'jamie') {
+    if (/效率|成长|提升|评估|agent|Agent|助手|改进|怎么/.test(message)) {
+      return [
+        '我会把自己定位成团队 Agent 的成长教练，而不是只做权限和成本管理。',
+        '我建议先用四个指标评估每个 Agent：',
+        '1. 是否直接回答同事问题，而不是只说“我会记录”。',
+        '2. 是否能把对话转成任务、客户、报价或商机动作。',
+        '3. 同事反馈里“有用 / 不准 / 需更具体”的比例如何。',
+        '4. 生成的任务和报价是否真的被跟进、关闭并沉淀经验。',
+        '下一步我会帮你形成一张 Agent 体检表：每个 Agent 的强项、短板、需要调整的提示词和验证指标。'
+      ].join('\n\n');
+    }
+    return '收到。作为 Jamie_AI，我会优先观察各 Agent 的效率、反馈质量、任务转化率和学习沉淀，帮助它们持续成长，让同事获得更可靠的帮助。';
+  }
   if (/不对|不正确|没回答|重新回答|换个回答|没听懂|不满意/.test(message)) {
     return `你说得对，我刚才没有回答到点上。作为 ${agent.name}，我应该先围绕 ${user.name} 的真实工作问题给出下一步动作，而不是只说记录和沉淀。下一步我建议：明确问题目标、拆出客户/技术/风险/动作四类信息，再形成可执行任务。`;
   }
