@@ -310,7 +310,7 @@ function App() {
 
 function EnterpriseApp({ auth, onLogout }) {
   const [page, setPage] = useState('dashboard');
-  const [workspaceId, setWorkspaceId] = useState(auth.user.role === 'super_admin' ? 'larry' : auth.user.id);
+  const [workspaceId, setWorkspaceId] = useState(auth.user.id);
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState([]);
@@ -393,6 +393,19 @@ function EnterpriseApp({ auth, onLogout }) {
   const myTasks = tasks.filter((task) => task.owner === workspaceId || (task.collaborators ?? []).includes(workspaceId));
   const myCustomers = customers.filter((customer) => customer.owner === workspaceId || (customer.collaborators ?? []).includes(workspaceId) || isJamie);
   const pendingQuotes = quotes.filter((quote) => quote.owner === workspaceId || (quote.collaborators ?? []).includes(workspaceId) || isJamie);
+  const dashboardOwnerId = auth.user.id;
+  const dashboardAccess = accessByUser[dashboardOwnerId] ?? { active: true, ownerName: auth.user.name };
+  const dashboardSavedCards = allOpportunities.filter((item) => (savedByUser[dashboardOwnerId] ?? []).includes(item.id));
+  const dashboardBroadcasts = broadcasts.filter((item) => item.recipients.includes(dashboardOwnerId));
+  const dashboardTasks = isJamie
+    ? tasks
+    : tasks.filter((task) => task.owner === dashboardOwnerId || (task.collaborators ?? []).includes(dashboardOwnerId));
+  const dashboardCustomers = isJamie
+    ? customers
+    : customers.filter((customer) => customer.owner === dashboardOwnerId || (customer.collaborators ?? []).includes(dashboardOwnerId));
+  const dashboardQuotes = isJamie
+    ? quotes
+    : quotes.filter((quote) => quote.owner === dashboardOwnerId || (quote.collaborators ?? []).includes(dashboardOwnerId));
   const totalUsage = Object.values(usageByUser).reduce(
     (sum, item) => ({
       calls: sum.calls + item.calls,
@@ -1128,17 +1141,17 @@ function EnterpriseApp({ auth, onLogout }) {
       {visiblePage === 'dashboard' && (
         <BusinessDashboard
           agentFeedback={agentFeedback}
-          broadcasts={inboxBroadcasts}
-          customers={myCustomers}
+          broadcasts={dashboardBroadcasts}
+          customers={dashboardCustomers}
           isJamie={isJamie}
           opportunities={allOpportunities}
-          quotes={pendingQuotes}
-          savedCards={savedCards}
+          quotes={dashboardQuotes}
+          savedCards={dashboardSavedCards}
           setPage={setPage}
           startQuickPrompt={startQuickPrompt}
           systemOutputs={systemOutputs}
-          tasks={myTasks}
-          workspaceName={access.ownerName}
+          tasks={dashboardTasks}
+          workspaceName={dashboardAccess.ownerName}
         />
       )}
 
