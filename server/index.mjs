@@ -341,7 +341,7 @@ function requireSystemAgentRoutePermission(req, res, next) {
   const { id } = req.params;
   if (req.session?.role === 'super_admin') return next();
   if (workflowSystemAgentIds.has(id) && canUseWorkflowAgent(req.session, id)) return next();
-  return res.status(403).json({ error: workflowSystemAgentIds.has(id) ? 'workflow_owner_only' : 'jamie_only' });
+  return res.status(403).json({ error: workflowSystemAgentIds.has(id) ? `${id}_agent_forbidden` : 'jamie_only' });
 }
 
 function estimateTokens(text = '') {
@@ -691,7 +691,7 @@ app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   if (!fixedSystemAgentIds.includes(id)) return res.status(404).json({ error: 'system_agent_not_found' });
   if (id === 'internal' && req.session.role !== 'super_admin') return res.status(403).json({ error: 'jamie_only' });
   if (workflowSystemAgentIds.has(id) && !canUseWorkflowAgent(req.session, id)) {
-    return res.status(403).json({ error: 'workflow_owner_only' });
+    return res.status(403).json({ error: `${id}_agent_forbidden` });
   }
   const store = await readStore();
   const systemAgent = store.systemAgents[id];
