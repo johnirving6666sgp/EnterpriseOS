@@ -325,6 +325,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [quotes, setQuotes] = useState([]);
   const [customers, setCustomers] = useState(customerSeed);
   const [lastWorkflowArtifacts, setLastWorkflowArtifacts] = useState(null);
+  const [agentFeedback, setAgentFeedback] = useState([]);
   const [systemRunning, setSystemRunning] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
@@ -441,6 +442,7 @@ function EnterpriseApp({ auth, onLogout }) {
         setWorkflowOwnerId(state.workflowOwnerId ?? 'larry');
         setWorkflowAgentsForAll(state.workflowAgentsForAll !== false);
         setPendingRegistrations(state.pendingRegistrations ?? []);
+        setAgentFeedback(state.agentFeedback ?? []);
         setUsageByUser((current) => ({ ...current, ...(state.usage ?? {}) }));
         setModelByUser((current) => ({
           ...current,
@@ -829,6 +831,42 @@ function EnterpriseApp({ auth, onLogout }) {
     setBroadcasted((current) => (current.includes(card.id) ? current : [...current, card.id]));
   };
 
+  const startQuickPrompt = (text) => {
+    setDraft(text);
+    setPage('workspace');
+  };
+
+  const submitAgentFeedback = (agentId, message, rating) => {
+    const localFeedback = {
+      id: `local-feedback-${Date.now()}`,
+      agentId,
+      rating,
+      messageText: message.text,
+      createdBy: auth.user.id,
+      at: new Date().toISOString()
+    };
+    setAgentFeedback((current) => [localFeedback, ...current].slice(0, 30));
+    apiFetch('/api/agent-feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        agentId,
+        rating,
+        messageText: message.text
+      })
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('feedback_save_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (payload.agentFeedback) setAgentFeedback(payload.agentFeedback);
+        if (payload.systemAgentOutputs) {
+          setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
+        }
+      })
+      .catch(() => {});
+  };
+
   const runSystemAgent = (id) => {
     if ((id === 'internal' && !isJamie) || systemRunning[id]) return;
     setSystemRunning((current) => ({ ...current, [id]: true }));
@@ -1039,12 +1077,15 @@ function EnterpriseApp({ auth, onLogout }) {
 
       {visiblePage === 'dashboard' && (
         <BusinessDashboard
+          agentFeedback={agentFeedback}
           broadcasts={inboxBroadcasts}
           customers={myCustomers}
           opportunities={allOpportunities}
           quotes={pendingQuotes}
           savedCards={savedCards}
           setPage={setPage}
+          startQuickPrompt={startQuickPrompt}
+          systemOutputs={systemOutputs}
           tasks={myTasks}
           workspaceName={access.ownerName}
         />
@@ -1078,6 +1119,7 @@ function EnterpriseApp({ auth, onLogout }) {
           attachmentLoading={attachmentLoading}
           removeAttachment={removeAttachment}
           submitFeedback={submitFeedback}
+          submitAgentFeedback={submitAgentFeedback}
           lastWorkflowArtifacts={lastWorkflowArtifacts}
         />
       )}
@@ -1186,11 +1228,12 @@ function BusinessFlowStrip() {
   );
 }
 
-function BusinessDashboard({ broadcasts, customers, opportunities, quotes, savedCards, setPage, tasks, workspaceName }) {
+function BusinessDashboard({ agentFeedback, broadcasts, customers, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
   const focusLeads = opportunities.slice(0, 3);
   const activeTasks = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).slice(0, 5);
   const activeQuotes = quotes.filter((quote) => quote.approval !== '已完成').slice(0, 3);
   const unreadBroadcasts = broadcasts.slice(0, 4);
+  const learningItems = buildLearningDigest({ agentFeedback, systemOutputs, tasks, quotes, customers, savedCards });
   return (
     <section className="dashboard-page">
       <div className="dashboard-hero">
@@ -1198,6 +1241,11 @@ function BusinessDashboard({ broadcasts, customers, opportunities, quotes, saved
           <p className="eyebrow">Business Workspace</p>
           <h2>{workspaceName} 今天先看这里</h2>
           <p>系统会把线索、客户、任务、报价和广播收拢到这里，先告诉你今天该推进什么。</p>
+          <div className="quick-start-row">
+            <button onClick={() => startQuickPrompt('我今天拜访了一个客户，请帮我整理客户需求、下一步任务和是否需要报价。')}>客户拜访</button>
+            <button onClick={() => startQuickPrompt('请根据这份会议纪要，帮我提取任务、负责人、截止时间和风险。')}>会议纪要</button>
+            <button onClick={() => startQuickPrompt('我需要准备一个报价方案，请先列出必须确认的参数和报价依据。')}>报价准备</button>
+          </div>
         </div>
         <button className="agent-run-button" onClick={() => setPage('workspace')}>进入我的 Agent 对话</button>
       </div>
@@ -1241,6 +1289,14 @@ function BusinessDashboard({ broadcasts, customers, opportunities, quotes, saved
               <span>{item.type} · {Object.keys(item.feedback ?? {}).length} 人反馈</span>
             </button>
           )) : <p className="empty-hint">暂无新的广播。</p>}
+        </DashboardPanel>
+        <DashboardPanel title="Agent 学习状态" action="继续训练" onAction={() => setPage('workspace')}>
+          {learningItems.map((item) => (
+            <div className="learning-row" key={item.title}>
+              <strong>{item.title}</strong>
+              <span>{item.text}</span>
+            </div>
+          ))}
         </DashboardPanel>
       </div>
     </section>
@@ -1286,7 +1342,8 @@ function CoworkerWorkspace({
   clearConversation,
   createTaskFromMessage,
   removeAttachment,
-  submitFeedback
+  submitFeedback,
+  submitAgentFeedback
 }) {
   const uploadInputId = `upload-${selectedId}`;
   const [discussionDraft, setDiscussionDraft] = useState({ broadcastId: '', discussWith: [], note: '' });
@@ -1355,9 +1412,12 @@ function CoworkerWorkspace({
               <div className={`message ${message.from} ${message.thinking ? 'thinking' : ''}`} key={message.id ?? `${message.from}-${index}`}>
                 {message.text}
                 {message.from === 'agent' && !message.thinking && (
-                  <button className="message-task-button" onClick={() => createTaskFromMessage(message)}>
-                    生成任务
-                  </button>
+                  <div className="message-feedback-actions">
+                    <button onClick={() => createTaskFromMessage(message)}>生成任务</button>
+                    <button onClick={() => submitAgentFeedback(selectedId, message, 'useful')}>有用</button>
+                    <button onClick={() => submitAgentFeedback(selectedId, message, 'inaccurate')}>不准</button>
+                    <button onClick={() => submitAgentFeedback(selectedId, message, 'need_detail')}>需更具体</button>
+                  </div>
                 )}
               </div>
             ))
@@ -2581,6 +2641,33 @@ function recommendOwnerFromOpportunity(card = {}) {
 
 function artifactPreview(item) {
   return item?.title || item?.name || item?.customer || item?.type || '已生成';
+}
+
+function buildLearningDigest({ agentFeedback = [], systemOutputs = {}, tasks = [], quotes = [], customers = [], savedCards = [] }) {
+  const completedTasks = tasks.filter((task) => ['done', 'closed'].includes(task.status)).length;
+  const internalLearnings = systemOutputs.internal?.filter((item) => item.learning).length ?? 0;
+  const usefulFeedback = agentFeedback.filter((item) => item.rating === 'useful').length;
+  const improvementFeedback = agentFeedback.filter((item) => item.rating && item.rating !== 'useful').length;
+  return [
+    {
+      title: '个人助理',
+      text: usefulFeedback || improvementFeedback
+        ? `已收到 ${usefulFeedback} 条有用反馈、${improvementFeedback} 条改进反馈。`
+        : '先从一次真实客户问题或会议纪要开始学习。'
+    },
+    {
+      title: '任务/客户/报价 Agent',
+      text: `当前沉淀 ${tasks.length} 个任务、${customers.length} 个客户、${quotes.length} 个报价草案。`
+    },
+    {
+      title: '内部信息 Agent',
+      text: `已吸收 ${completedTasks} 个任务结果和 ${internalLearnings} 条知识复盘。`
+    },
+    {
+      title: '外部机会 Agent',
+      text: savedCards.length ? `你已收藏 ${savedCards.length} 条线索，可继续带回对话分析。` : '收藏外部线索后，会自动进入个人助理和业务流程。'
+    }
+  ];
 }
 
 function getWorkspaceDailyLine(coworker) {

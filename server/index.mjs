@@ -121,6 +121,7 @@ const seed = {
   conversations: {},
   systemAgentOutputs: { internal: [], external: [], task: [], quote: [], customer: [] },
   generatedOpportunities: [],
+  agentFeedback: [],
   tenderScan: { seenIds: {}, runs: [] },
   tasks: defaultTasks,
   quotes: [],
@@ -205,6 +206,7 @@ function ensureDefaultUsersAndAgents(store) {
   store.systemAgentOutputs ??= {};
   store.conversations ??= {};
   store.savedOpportunities ??= {};
+  store.agentFeedback ??= [];
   store.tenderScan ??= { seenIds: {}, runs: [] };
   store.tasks ??= [];
   store.quotes ??= [];
@@ -544,6 +546,7 @@ app.get('/api/state', requireAuth, async (req, res) => {
     broadcasts: userBroadcasts,
     usage: { [req.session.userId]: store.usage[req.session.userId] ?? emptyUsage() },
     systemAgents: store.systemAgents,
+    agentFeedback: (store.agentFeedback ?? []).filter((item) => item.agentId === req.session.userId || item.createdBy === req.session.userId).slice(0, 30),
     workflowOwnerId: WORKFLOW_OWNER_ID,
     workflowAgentsForAll: true,
     workflowAgentOutputs: isWorkflowOwner(req.session)
@@ -927,6 +930,56 @@ app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
   recordAudit(store, req.session.userId, 'task.updated', { taskId: task.id, status: task.status });
   await writeStore(store);
   res.json({ task, tasks: visibleTasksForSession(store, req.session), systemAgentOutputs: store.systemAgentOutputs });
+});
+
+app.post('/api/agent-feedback', requireAuth, async (req, res) => {
+  const store = await readStore();
+  const { agentId, messageText, rating, note = '' } = req.body ?? {};
+  const allowedRatings = new Set(['useful', 'inaccurate', 'need_detail']);
+  if (!agentId || !allowedRatings.has(rating)) return res.status(400).json({ error: 'invalid_agent_feedback' });
+  if (req.session.role !== 'super_admin' && agentId !== req.session.userId) return res.status(403).json({ error: 'private_feedback' });
+
+  const feedback = {
+    id: crypto.randomUUID(),
+    agentId,
+    rating,
+    note: truncateText(note, 240),
+    messageText: truncateText(messageText, 360),
+    createdBy: req.session.userId,
+    at: new Date().toISOString()
+  };
+  store.agentFeedback ??= [];
+  store.agentFeedback.unshift(feedback);
+  store.agentFeedback = store.agentFeedback.slice(0, 300);
+
+  const ratingText = { useful: '有用回答', inaccurate: '回答不准', need_detail: '需要更具体' }[rating];
+  store.systemAgentOutputs ??= {};
+  store.systemAgentOutputs.internal ??= [];
+  store.systemAgentOutputs.internal.unshift({
+    id: `agent-feedback-learning-${Date.now()}`,
+    at: new Date().toISOString(),
+    title: `Agent 回复反馈：${ratingText}`,
+    text:
+      rating === 'useful'
+        ? '同事确认这类回答有帮助，后续相似问题可复用其结构、语气和业务拆解方式。'
+        : '同事标记这类回答需要改进，后续应更直接回答问题、给出具体下一步和业务依据。',
+    source: `${agentId}_AI / 同事反馈`,
+    asset: 'Agent 回复质量学习.md',
+    learning: `个人助理 ${agentId}_AI 收到“${ratingText}”反馈，系统会把它作为回复质量和业务可用性的学习信号。`
+  });
+  store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
+  recordAudit(store, req.session.userId, 'agent.feedback', { agentId, rating });
+  await writeStore(store);
+
+  const visibleFeedback =
+    req.session.role === 'super_admin'
+      ? store.agentFeedback
+      : store.agentFeedback.filter((item) => item.agentId === req.session.userId || item.createdBy === req.session.userId);
+  res.json({
+    feedback,
+    agentFeedback: visibleFeedback.slice(0, 30),
+    systemAgentOutputs: store.systemAgentOutputs
+  });
 });
 
 app.post('/api/llm/proxy', requireAuth, async (req, res) => {
