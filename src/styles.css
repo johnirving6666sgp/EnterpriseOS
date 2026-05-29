@@ -554,6 +554,35 @@ h2 {
   }
 }
 
+.task-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #c7ead8;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-weight: 850;
+}
+
+.task-notice.error {
+  color: #9f1239;
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
+.task-notice button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #172033;
+  font-weight: 900;
+}
+
 .saved-dock,
 .broadcast-inbox,
 .workflow-artifacts-dock {

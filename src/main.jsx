@@ -326,6 +326,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [customers, setCustomers] = useState(customerSeed);
   const [lastWorkflowArtifacts, setLastWorkflowArtifacts] = useState(null);
   const [agentFeedback, setAgentFeedback] = useState([]);
+  const [taskNotice, setTaskNotice] = useState(null);
   const [systemRunning, setSystemRunning] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
@@ -965,6 +966,7 @@ function EnterpriseApp({ auth, onLogout }) {
   };
 
   const createTaskFromMessage = (message) => {
+    setTaskNotice({ status: 'loading', text: '正在生成任务...' });
     apiFetch('/api/tasks/from-message', {
       method: 'POST',
       body: JSON.stringify({ ownerId: workspaceId, text: message.text, source: `${coworker.agent} 对话` })
@@ -975,9 +977,17 @@ function EnterpriseApp({ auth, onLogout }) {
       })
       .then((payload) => {
         if (payload.tasks) setTasks(payload.tasks);
-        if (payload.task) setPage('tasks');
+        if (payload.task) {
+          setTaskNotice({ status: 'success', text: `已生成任务：${payload.task.title}` });
+          setLastWorkflowArtifacts((current) => ({
+            ...(current ?? {}),
+            tasks: [payload.task, ...((current?.tasks ?? []).filter((item) => item.id !== payload.task.id))]
+          }));
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        setTaskNotice({ status: 'error', text: '任务生成失败，请稍后再试。' });
+      });
   };
 
   const updateTask = (taskId, patch) => {
@@ -1120,6 +1130,7 @@ function EnterpriseApp({ auth, onLogout }) {
           removeAttachment={removeAttachment}
           submitFeedback={submitFeedback}
           submitAgentFeedback={submitAgentFeedback}
+          taskNotice={taskNotice}
           lastWorkflowArtifacts={lastWorkflowArtifacts}
         />
       )}
@@ -1343,7 +1354,8 @@ function CoworkerWorkspace({
   createTaskFromMessage,
   removeAttachment,
   submitFeedback,
-  submitAgentFeedback
+  submitAgentFeedback,
+  taskNotice
 }) {
   const uploadInputId = `upload-${selectedId}`;
   const [discussionDraft, setDiscussionDraft] = useState({ broadcastId: '', discussWith: [], note: '' });
@@ -1425,6 +1437,12 @@ function CoworkerWorkspace({
             <WorkspaceStarter coworker={coworker} />
           )}
         </div>
+        {taskNotice && (
+          <div className={`task-notice ${taskNotice.status}`}>
+            <span>{taskNotice.text}</span>
+            <button onClick={() => setPage('tasks')}>去任务看板查看</button>
+          </div>
+        )}
         <div className="voice-composer">
           <div className="composer-input-row">
             <input
