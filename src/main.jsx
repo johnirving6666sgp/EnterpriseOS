@@ -1351,6 +1351,7 @@ function CoworkerWorkspace({
           <span>👤 {access.ownerName} 的数字空间</span>
           <div className="identity-actions">
             <strong>{coworker.agent}</strong>
+            <button className="return-dashboard-button" onClick={() => setPage('dashboard')}>返回业务工作台</button>
             <button onClick={clearConversation} disabled={isThinking}>清空对话</button>
           </div>
         </div>

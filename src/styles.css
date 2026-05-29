@@ -419,6 +419,11 @@ h2 {
   font-weight: 900;
 }
 
+.identity-actions .return-dashboard-button {
+  color: #ffffff;
+  background: #172033;
+}
+
 .message-stream {
   display: flex;
   flex-direction: column;
