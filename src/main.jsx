@@ -268,6 +268,15 @@ const taskStatusColumns = [
 ];
 
 const customerStageColumns = ['未接触', '已接触', '有意向', '待报价', '待成交', '已成交'];
+const taskStatusColumnsWithClosed = [...taskStatusColumns, { id: 'closed', title: '已关闭' }];
+
+const businessRoleOptions = [
+  { id: 'sales', label: '销售' },
+  { id: 'technical', label: '技术' },
+  { id: 'management', label: '管理' },
+  { id: 'admin', label: '行政' },
+  { id: 'tester', label: '测试' }
+];
 
 const customerSeed = [
   { name: '华东有色金属研究院', type: '科研机构', stage: '有意向', owner: 'luyang', contact: '张主任', phone: '138****8888', last: '5 天前', next: '确认设备升级预算和技术负责人。' },
@@ -300,7 +309,7 @@ function App() {
 }
 
 function EnterpriseApp({ auth, onLogout }) {
-  const [page, setPage] = useState('workspace');
+  const [page, setPage] = useState('dashboard');
   const [workspaceId, setWorkspaceId] = useState(auth.user.role === 'super_admin' ? 'larry' : auth.user.id);
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
@@ -330,6 +339,7 @@ function EnterpriseApp({ auth, onLogout }) {
   ]);
   const [workflowOwnerId, setWorkflowOwnerId] = useState('larry');
   const [workflowAgentsForAll, setWorkflowAgentsForAll] = useState(true);
+  const [pendingRegistrations, setPendingRegistrations] = useState([]);
   const [modelByUser, setModelByUser] = useState(Object.fromEntries(teammates.map((item) => [item.id, item.model])));
   const [routeByUser, setRouteByUser] = useState(
     Object.fromEntries(
@@ -359,10 +369,11 @@ function EnterpriseApp({ auth, onLogout }) {
   const voiceActiveRef = useRef(false);
 
   const isJamie = auth.user.role === 'super_admin';
+  const permissions = auth.user.permissions ?? { agents: true, customers: true, quote: true, tasks: true, insight: isJamie };
   const isWorkflowOwner = auth.user.id === workflowOwnerId;
-  const canManageWorkflow = isJamie || isWorkflowOwner || workflowAgentsForAll;
+  const canManageWorkflow = (isJamie || isWorkflowOwner || workflowAgentsForAll) && permissions.tasks !== false;
   const visibleTeammates = isJamie ? teammates : teammates.filter((item) => item.id === auth.user.id);
-  const visiblePage = isJamie ? page : page === 'commander' ? 'workspace' : page;
+  const visiblePage = isJamie ? page : page === 'commander' ? 'dashboard' : page;
   const coworker = teammates.find((item) => item.id === workspaceId) ?? teammates[1];
   const access = accessByUser[workspaceId] ?? { active: true, ownerName: coworker.name };
   const model = getModel(modelByUser[workspaceId]);
@@ -374,6 +385,9 @@ function EnterpriseApp({ auth, onLogout }) {
   const allInsightCards = [...(systemOutputs.internal ?? []), ...insightCards];
   const savedCards = allOpportunities.filter((item) => (savedByUser[workspaceId] ?? []).includes(item.id));
   const inboxBroadcasts = broadcasts.filter((item) => item.recipients.includes(workspaceId));
+  const myTasks = tasks.filter((task) => task.owner === workspaceId || (task.collaborators ?? []).includes(workspaceId));
+  const myCustomers = customers.filter((customer) => customer.owner === workspaceId || (customer.collaborators ?? []).includes(workspaceId) || isJamie);
+  const pendingQuotes = quotes.filter((quote) => quote.owner === workspaceId || (quote.collaborators ?? []).includes(workspaceId) || isJamie);
   const totalUsage = Object.values(usageByUser).reduce(
     (sum, item) => ({
       calls: sum.calls + item.calls,
@@ -426,6 +440,7 @@ function EnterpriseApp({ auth, onLogout }) {
         setBroadcasts(state.broadcasts ?? []);
         setWorkflowOwnerId(state.workflowOwnerId ?? 'larry');
         setWorkflowAgentsForAll(state.workflowAgentsForAll !== false);
+        setPendingRegistrations(state.pendingRegistrations ?? []);
         setUsageByUser((current) => ({ ...current, ...(state.usage ?? {}) }));
         setModelByUser((current) => ({
           ...current,
@@ -927,6 +942,31 @@ function EnterpriseApp({ auth, onLogout }) {
       .catch(() => {});
   };
 
+  const approveRegistration = (id, options = {}) => {
+    apiFetch(`/api/admin/registrations/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(options)
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('approve_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        setPendingRegistrations(payload.pendingRegistrations ?? []);
+      })
+      .catch(() => {});
+  };
+
+  const rejectRegistration = (id) => {
+    apiFetch(`/api/admin/registrations/${id}/reject`, { method: 'POST' })
+      .then((response) => {
+        if (!response.ok) throw new Error('reject_failed');
+        return response.json();
+      })
+      .then((payload) => setPendingRegistrations(payload.pendingRegistrations ?? []))
+      .catch(() => {});
+  };
+
   return (
     <main className="app-shell">
       <header className="app-top">
@@ -935,24 +975,35 @@ function EnterpriseApp({ auth, onLogout }) {
           <h1>从线索到客户，再到任务、报价和复盘</h1>
         </div>
         <nav className="top-nav" aria-label="页面导航">
+          <button className={visiblePage === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}>
+            业务工作台
+          </button>
           <button className={visiblePage === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
-            同事桌面
+            我的 Agent
           </button>
           <button className={visiblePage === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
             商机雷达
           </button>
-          <button className={visiblePage === 'crm' ? 'active' : ''} onClick={() => setPage('crm')}>
-            客户管理
-          </button>
-          <button className={visiblePage === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>
-            任务看板
-          </button>
-          <button className={visiblePage === 'quote' ? 'active' : ''} onClick={() => setPage('quote')}>
-            报价方案
-          </button>
-          <button className={visiblePage === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
-            内部信息仓
-          </button>
+          {permissions.customers !== false && (
+            <button className={visiblePage === 'crm' ? 'active' : ''} onClick={() => setPage('crm')}>
+              客户管理
+            </button>
+          )}
+          {permissions.tasks !== false && (
+            <button className={visiblePage === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>
+              任务看板
+            </button>
+          )}
+          {permissions.quote !== false && (
+            <button className={visiblePage === 'quote' ? 'active' : ''} onClick={() => setPage('quote')}>
+              报价方案
+            </button>
+          )}
+          {permissions.insight === true && (
+            <button className={visiblePage === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
+              内部信息仓
+            </button>
+          )}
           <button className={visiblePage === 'broadcast' ? 'active' : ''} onClick={() => setPage('broadcast')}>
             广播中心
           </button>
@@ -966,6 +1017,19 @@ function EnterpriseApp({ auth, onLogout }) {
         </nav>
       </header>
       <BusinessFlowStrip />
+
+      {visiblePage === 'dashboard' && (
+        <BusinessDashboard
+          broadcasts={inboxBroadcasts}
+          customers={myCustomers}
+          opportunities={allOpportunities}
+          quotes={pendingQuotes}
+          savedCards={savedCards}
+          setPage={setPage}
+          tasks={myTasks}
+          workspaceName={access.ownerName}
+        />
+      )}
 
       {visiblePage === 'workspace' && (
         <CoworkerWorkspace
@@ -999,7 +1063,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'insight' && (
+      {visiblePage === 'insight' && permissions.insight === true && (
         <InsightAgent
           broadcasted={broadcasted}
           broadcasts={broadcasts}
@@ -1013,7 +1077,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'tasks' && (
+      {visiblePage === 'tasks' && permissions.tasks !== false && (
         <TaskBoard
           canManageWorkflow={canManageWorkflow}
           createTask={createTask}
@@ -1025,18 +1089,21 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'crm' && (
+      {visiblePage === 'crm' && permissions.customers !== false && (
         <CustomerManager
           canManageWorkflow={canManageWorkflow}
           customers={customers}
           customerOutputs={systemOutputs.customer ?? []}
+          opportunities={allOpportunities}
+          quotes={quotes}
           running={systemRunning.customer}
           runCustomerAgent={() => runSystemAgent('customer')}
           setPage={setPage}
+          tasks={tasks}
         />
       )}
 
-      {visiblePage === 'quote' && (
+      {visiblePage === 'quote' && permissions.quote !== false && (
         <QuoteBuilder
           canManageWorkflow={canManageWorkflow}
           quotes={quotes}
@@ -1072,6 +1139,9 @@ function EnterpriseApp({ auth, onLogout }) {
           setRoute={setRoute}
           setSystemRoute={setSystemRoute}
           applyRecommendedRoutes={applyRecommendedRoutes}
+          approveRegistration={approveRegistration}
+          pendingRegistrations={pendingRegistrations}
+          rejectRegistration={rejectRegistration}
           suspend={suspend}
           teammates={teammates}
           totalUsage={totalUsage}
@@ -1093,6 +1163,85 @@ function BusinessFlowStrip() {
           {index < steps.length - 1 && <i>→</i>}
         </React.Fragment>
       ))}
+    </section>
+  );
+}
+
+function BusinessDashboard({ broadcasts, customers, opportunities, quotes, savedCards, setPage, tasks, workspaceName }) {
+  const focusLeads = opportunities.slice(0, 3);
+  const activeTasks = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).slice(0, 5);
+  const activeQuotes = quotes.filter((quote) => quote.approval !== '已完成').slice(0, 3);
+  const unreadBroadcasts = broadcasts.slice(0, 4);
+  return (
+    <section className="dashboard-page">
+      <div className="dashboard-hero">
+        <div>
+          <p className="eyebrow">Business Workspace</p>
+          <h2>{workspaceName} 今天先看这里</h2>
+          <p>系统会把线索、客户、任务、报价和广播收拢到这里，先告诉你今天该推进什么。</p>
+        </div>
+        <button className="agent-run-button" onClick={() => setPage('workspace')}>进入我的 Agent 对话</button>
+      </div>
+      <div className="dashboard-grid">
+        <DashboardPanel title="今日重点线索" action="去线索池" onAction={() => setPage('opportunity')}>
+          {focusLeads.map((item) => (
+            <button className="dashboard-row" key={item.id} onClick={() => setPage('opportunity')}>
+              <strong>{item.title}</strong>
+              <span>{opportunityScore(item)} 分 · {item.recommendedOwner ? `建议 ${getTeammateName(item.recommendedOwner)}` : item.recommendation || item.quality?.recommendation || '待判断'}</span>
+            </button>
+          ))}
+        </DashboardPanel>
+        <DashboardPanel title="我的客户" action="去客户管理" onAction={() => setPage('crm')}>
+          {customers.slice(0, 5).map((customer) => (
+            <button className="dashboard-row" key={customer.id || customer.name} onClick={() => setPage('crm')}>
+              <strong>{customer.name}</strong>
+              <span>{normalizeStageLabel(customer.stage)} · 下一步：{customer.next || '待确认'}</span>
+            </button>
+          ))}
+        </DashboardPanel>
+        <DashboardPanel title="我的待办" action="去任务看板" onAction={() => setPage('tasks')}>
+          {activeTasks.map((task) => (
+            <button className="dashboard-row" key={task.id} onClick={() => setPage('tasks')}>
+              <strong>{task.title}</strong>
+              <span>{getTeammateName(task.owner)} · {task.due} · {task.source}</span>
+            </button>
+          ))}
+        </DashboardPanel>
+        <DashboardPanel title="待处理报价" action="去报价方案" onAction={() => setPage('quote')}>
+          {activeQuotes.length ? activeQuotes.map((quote) => (
+            <button className="dashboard-row" key={quote.id} onClick={() => setPage('quote')}>
+              <strong>{quote.customer}</strong>
+              <span>{quote.type} · {quote.priceRange || quote.approval || '待补齐参数'}</span>
+            </button>
+          )) : <p className="empty-hint">暂无待处理报价。</p>}
+        </DashboardPanel>
+        <DashboardPanel title="内部广播/协作邀请" action="去广播中心" onAction={() => setPage('broadcast')}>
+          {unreadBroadcasts.length ? unreadBroadcasts.map((item) => (
+            <button className="dashboard-row" key={item.id} onClick={() => setPage('broadcast')}>
+              <strong>{item.title}</strong>
+              <span>{item.type} · {Object.keys(item.feedback ?? {}).length} 人反馈</span>
+            </button>
+          )) : <p className="empty-hint">暂无新的广播。</p>}
+        </DashboardPanel>
+        <DashboardPanel title="我的 Agent 对话入口" action="开始对话" onAction={() => setPage('workspace')}>
+          <button className="dashboard-row primary" onClick={() => setPage('workspace')}>
+            <strong>把客户问题、会议纪要或报价想法发给个人助理</strong>
+            <span>已收藏 {savedCards.length} 条线索，可直接带回对话分析。</span>
+          </button>
+        </DashboardPanel>
+      </div>
+    </section>
+  );
+}
+
+function DashboardPanel({ action, children, onAction, title }) {
+  return (
+    <section className="dashboard-panel">
+      <div className="dashboard-panel-head">
+        <strong>{title}</strong>
+        <button onClick={onAction}>{action}</button>
+      </div>
+      <div className="dashboard-panel-body">{children}</div>
     </section>
   );
 }
@@ -1418,6 +1567,11 @@ function AuthScreen({ onAuth }) {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'auth_failed');
+      if (payload.pending) {
+        setStatus('注册已提交，等待 Jamie 审批开通权限。');
+        setMode('login');
+        return;
+      }
       onAuth(payload);
     } catch (error) {
       const message = ['Failed to fetch', 'Load failed'].includes(error.message)
@@ -1507,6 +1661,7 @@ function WorkspaceStarter({ coworker }) {
 function authErrorText(code) {
   const messages = {
     invalid_credentials: '用户 ID 或密码不正确。',
+    registration_pending: '注册已提交，正在等待 Jamie 审批。',
     user_suspended: '这个账号已被中止权限，请联系 Jamie。',
     invalid_invite_code: '团队邀请码不正确。',
     password_too_short: '密码至少需要 8 位。',
@@ -1667,7 +1822,7 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
 function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks, taskOutputs, updateTask }) {
   const latestOutput = taskOutputs[0];
   const extractedTasks = latestOutput?.tasks ?? [];
-  const groupedTasks = taskStatusColumns.map((column) => ({
+  const groupedTasks = taskStatusColumnsWithClosed.map((column) => ({
     ...column,
     items: tasks.filter((task) => task.status === column.id)
   }));
@@ -1745,6 +1900,9 @@ function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks
                   {column.id !== 'done' && (
                     <button onClick={() => updateTask(task.id, { status: 'done', result: '已完成，等待系统沉淀结果。' })}>已完成</button>
                   )}
+                  {column.id !== 'closed' && (
+                    <button onClick={() => updateTask(task.id, { status: 'closed', evaluation: task.result || '已关闭，等待后续评估。' })}>关闭</button>
+                  )}
                 </div>
               </article>
             ))}
@@ -1755,7 +1913,7 @@ function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks
   );
 }
 
-function CustomerManager({ canManageWorkflow, customers, customerOutputs, running, runCustomerAgent, setPage }) {
+function CustomerManager({ canManageWorkflow, customers, customerOutputs, opportunities, quotes, running, runCustomerAgent, setPage, tasks }) {
   const latestOutput = customerOutputs[0];
   const latestCustomers = latestOutput?.customers ?? [];
   const groupedCustomers = customerStageColumns.map((stage) => ({
@@ -1824,6 +1982,7 @@ function CustomerManager({ canManageWorkflow, customers, customerOutputs, runnin
                 <p>联系人：{customer.contact} · {customer.phone}</p>
                 <p>上次联系：{customer.last}</p>
                 <p>下一步：{customer.next}</p>
+                <p>关联任务：{relatedTaskCount(customer, tasks)} · 关联商机：{relatedOpportunityCount(customer, opportunities)} · 关联报价：{relatedQuoteCount(customer, quotes)}</p>
                 <div className="customer-actions">
                   <button onClick={() => setPage('tasks')}>跟进</button>
                   <button onClick={() => setPage('quote')}>报价</button>
@@ -1904,7 +2063,11 @@ function QuoteBuilder({ canManageWorkflow, quotes, quoteOutputs, running, runQuo
               <p>报价类型：{quote.type} · 审批：{quote.approval}</p>
               <p>建议区间：{quote.priceRange || '待补齐参数后生成内部区间'}</p>
               <p>报价构成：{(quote.components ?? []).join('、') || '待补充'}</p>
+              <p>技术参数：{(quote.technicalParams ?? []).join('、') || '待确认'}</p>
+              <p>成本构成：{(quote.costStructure ?? []).join('、') || '待拆分'}</p>
               <p>参考依据：{(quote.basis ?? []).join('；') || '需要匹配历史报价和市场价格。'}</p>
+              <p>可谈判空间：{quote.negotiableSpace || '待确认'}</p>
+              <p>人工确认：{(quote.confirmQuestions ?? []).join('、') || '暂无'}</p>
               <p>缺失参数：{(quote.missing ?? []).join('、') || '暂无'}</p>
               <p>风险：{(quote.risk ?? []).join('、') || '暂无'}</p>
               <p>下一步：{quote.next}</p>
@@ -2083,6 +2246,7 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
                 <span>时间 {qualityValue(card, 'timing')}/5</span>
                 <span>优势 {qualityValue(card, 'advantage')}/5</span>
               </div>
+              <p className="action-note">推荐负责人：{getTeammateName(card.recommendedOwner || recommendOwnerFromOpportunity(card))}</p>
               {(card.recommendation || card.quality?.recommendation) && (
                 <p className="action-note">{card.recommendation || card.quality.recommendation}</p>
               )}
@@ -2110,7 +2274,10 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
 function JamieCommander({
   accessByUser,
   applyRecommendedRoutes,
+  approveRegistration,
   modelByUser,
+  pendingRegistrations,
+  rejectRegistration,
   routeBySystem,
   routeByUser,
   setModel,
@@ -2135,6 +2302,11 @@ function JamieCommander({
         <Metric label="总 Token" value={totalUsage.input + totalUsage.output} />
         <Metric label="强模型助理" value={Object.values(modelByUser).filter((id) => id === 'strong').length} />
       </div>
+      <RegistrationApprovalPanel
+        approveRegistration={approveRegistration}
+        pendingRegistrations={pendingRegistrations}
+        rejectRegistration={rejectRegistration}
+      />
       <section className="panel command-table-wrap">
         <h2>全员助理监控与模型干预矩阵</h2>
         <div className="command-table">
@@ -2259,6 +2431,71 @@ function JamieCommander({
   );
 }
 
+function RegistrationApprovalPanel({ approveRegistration, pendingRegistrations, rejectRegistration }) {
+  const [drafts, setDrafts] = useState({});
+  const getDraft = (id) =>
+    drafts[id] ?? {
+      businessRole: 'sales',
+      permissions: { agents: true, customers: true, quote: true, tasks: true, insight: false }
+    };
+  const patchDraft = (id, patch) => setDrafts((current) => ({ ...current, [id]: { ...getDraft(id), ...patch } }));
+  const patchPermission = (id, key, value) =>
+    patchDraft(id, { permissions: { ...getDraft(id).permissions, [key]: value } });
+
+  return (
+    <section className="panel registration-panel">
+      <h2>注册审批与角色权限</h2>
+      {pendingRegistrations.length ? (
+        <div className="registration-list">
+          {pendingRegistrations.map((item) => {
+            const draft = getDraft(item.id);
+            return (
+              <article key={item.id}>
+                <div>
+                  <strong>{item.name}</strong>
+                  <span>{item.id} · {new Date(item.requestedAt).toLocaleString()}</span>
+                </div>
+                <label>
+                  角色
+                  <select value={draft.businessRole} onChange={(event) => patchDraft(item.id, { businessRole: event.target.value })}>
+                    {businessRoleOptions.map((role) => (
+                      <option key={role.id} value={role.id}>{role.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="permission-grid">
+                  {[
+                    ['agents', '可使用 Agent'],
+                    ['customers', '可看客户'],
+                    ['quote', '可用报价 Agent'],
+                    ['tasks', '可管理任务'],
+                    ['insight', '可查看内部信息仓']
+                  ].map(([key, label]) => (
+                    <label key={key}>
+                      <input
+                        type="checkbox"
+                        checked={draft.permissions[key]}
+                        onChange={(event) => patchPermission(item.id, key, event.target.checked)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <div className="row-actions">
+                  <button onClick={() => approveRegistration(item.id, draft)}>审批开通</button>
+                  <button onClick={() => rejectRegistration(item.id)}>拒绝</button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="empty-hint">暂无待审批注册。</p>
+      )}
+    </section>
+  );
+}
+
 function Metric({ label, value }) {
   return (
     <div className="metric">
@@ -2306,6 +2543,26 @@ function opportunityScore(card) {
 
 function qualityValue(card, key) {
   return Number(card?.quality?.[key] ?? 3);
+}
+
+function relatedTaskCount(customer, tasks = []) {
+  return tasks.filter((task) => task.relatedCustomerId === customer.id || String(task.title).includes(customer.name) || String(task.next).includes(customer.name)).length;
+}
+
+function relatedQuoteCount(customer, quotes = []) {
+  return quotes.filter((quote) => quote.customer === customer.name || quote.relatedCustomerId === customer.id).length;
+}
+
+function relatedOpportunityCount(customer, opportunities = []) {
+  return opportunities.filter((item) => String(item.title).includes(customer.name) || String(item.why).includes(customer.name)).length;
+}
+
+function recommendOwnerFromOpportunity(card = {}) {
+  const text = `${card.title ?? ''} ${card.why ?? ''}`;
+  if (/材料|合金|靶材|高熵|难熔/.test(text)) return 'guihua';
+  if (/设备|熔炼炉|真空炉|冷坩埚|感应|电弧/.test(text)) return 'kingsong';
+  if (/客户|研究院|实验室|采购|招标|预算/.test(text)) return 'luyang';
+  return 'larry';
 }
 
 function artifactPreview(item) {

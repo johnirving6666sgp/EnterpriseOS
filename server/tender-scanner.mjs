@@ -332,9 +332,17 @@ function toOpportunity({ title, platform, sourceId, keyword, type, region, date,
     score,
     quality,
     recommendation: quality.recommendation,
+    recommendedOwner: recommendOwner(title),
     manual,
     createdAt: new Date().toISOString()
   };
+}
+
+function recommendOwner(title = '') {
+  if (/材料|合金|靶材|高熵|难熔/.test(title)) return 'guihua';
+  if (/设备|熔炼炉|真空炉|冷坩埚|感应|电弧/.test(title)) return 'kingsong';
+  if (/预算|客户|研究院|实验室|采购|招标/.test(title)) return 'luyang';
+  return 'larry';
 }
 
 function evaluateOpportunityQuality({ title, keyword, type, date, manual, score }) {
@@ -370,7 +378,7 @@ function daysSince(date) {
 function isFreshOpportunity(item) {
   if (item.manual || !item.date) return true;
   const days = daysSince(item.date);
-  return days === null || days <= 180;
+  return days === null || days <= 90;
 }
 
 function scoreOpportunity(title, keyword, manual) {

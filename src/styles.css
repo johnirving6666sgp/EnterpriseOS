@@ -161,6 +161,100 @@ button:disabled {
   font-weight: 900;
 }
 
+.dashboard-page {
+  display: grid;
+  gap: 14px;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.dashboard-hero,
+.dashboard-panel {
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.dashboard-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+}
+
+.dashboard-hero p {
+  margin: 6px 0 0;
+  color: #667085;
+  line-height: 1.45;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dashboard-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 210px;
+  padding: 14px;
+}
+
+.dashboard-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dashboard-panel-head button,
+.dashboard-row {
+  border: 0;
+  border-radius: 8px;
+  font-weight: 850;
+}
+
+.dashboard-panel-head button {
+  min-height: 30px;
+  padding: 0 9px;
+  color: #155e52;
+  background: #ecfff4;
+}
+
+.dashboard-panel-body {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-row {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 10px;
+  color: #172033;
+  background: #f8fafc;
+  text-align: left;
+}
+
+.dashboard-row.primary {
+  color: #ffffff;
+  background: #172033;
+}
+
+.dashboard-row span,
+.empty-hint {
+  color: #667085;
+  line-height: 1.4;
+  font-size: 13px;
+}
+
+.dashboard-row.primary span {
+  color: #d0d5dd;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: #667085;
@@ -1164,6 +1258,65 @@ select {
   margin-top: 12px;
 }
 
+.registration-panel {
+  margin-bottom: 12px;
+}
+
+.registration-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.registration-list article {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 180px minmax(260px, 2fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.registration-list span {
+  display: block;
+  margin-top: 4px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.registration-list label {
+  display: grid;
+  gap: 5px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.permission-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.permission-grid label {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: #344054;
+  background: #eef2f6;
+}
+
+.permission-grid input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
 .agent-boundary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1583,6 +1736,8 @@ select {
   .workflow-task-grid,
   .system-agent-grid,
   .agent-boundary-grid,
+  .dashboard-grid,
+  .registration-list article,
   .broadcast-form,
   .feedback-summary,
   .task-board,

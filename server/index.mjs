@@ -24,6 +24,7 @@ const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
 const fixedSystemAgentIds = ['external', 'customer', 'task', 'quote', 'internal'];
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
+const businessRoles = new Set(['sales', 'technical', 'management', 'admin', 'tester']);
 const tenderKeywords = (process.env.TENDER_KEYWORDS || fallbackTenderKeywords.join(','))
   .split(',')
   .map((keyword) => keyword.trim())
@@ -124,6 +125,7 @@ const seed = {
   tasks: defaultTasks,
   quotes: [],
   knowledge: [],
+  pendingRegistrations: [],
   customers: [
     { id: 'customer-east-research', name: '华东有色金属研究院', type: '科研机构', stage: '洽谈中', owner: 'luyang', contact: '张主任', phone: '138****8888', last: '5 天前', next: '确认设备升级预算和材料试制需求。' },
     { id: 'customer-sh-aerospace', name: '上海航天设备制造', type: '航天军工', stage: '报价阶段', owner: 'larry', contact: '李工', phone: '139****6666', last: '今天', next: '补齐高压阀门参数和交付周期。' },
@@ -208,6 +210,7 @@ function ensureDefaultUsersAndAgents(store) {
   store.quotes ??= [];
   store.knowledge ??= [];
   store.customers ??= [];
+  store.pendingRegistrations ??= [];
   store.usage ??= {};
   store.auditLog ??= [];
 
@@ -312,8 +315,13 @@ function isWorkflowOwner(session) {
   return session?.role === 'super_admin' || session?.userId === WORKFLOW_OWNER_ID;
 }
 
-function canUseWorkflowAgent(session) {
-  return session?.role === 'super_admin' || Boolean(session?.userId);
+function canUseWorkflowAgent(session, id = '') {
+  if (session?.role === 'super_admin') return true;
+  const permissions = session?.permissions ?? { tasks: true, quote: true, customers: true };
+  if (id === 'quote') return permissions.quote !== false;
+  if (id === 'customer') return permissions.customers !== false;
+  if (id === 'task') return permissions.tasks !== false;
+  return Boolean(session?.userId);
 }
 
 function requireAuth(req, res, next) {
@@ -332,7 +340,7 @@ function requireJamie(req, res, next) {
 function requireSystemAgentRoutePermission(req, res, next) {
   const { id } = req.params;
   if (req.session?.role === 'super_admin') return next();
-  if (workflowSystemAgentIds.has(id) && canUseWorkflowAgent(req.session)) return next();
+  if (workflowSystemAgentIds.has(id) && canUseWorkflowAgent(req.session, id)) return next();
   return res.status(403).json({ error: workflowSystemAgentIds.has(id) ? 'workflow_owner_only' : 'jamie_only' });
 }
 
@@ -345,6 +353,28 @@ function estimateTokens(text = '') {
 function recordAudit(store, actor, action, detail) {
   store.auditLog.unshift({ id: crypto.randomUUID(), at: new Date().toISOString(), actor, action, detail });
   store.auditLog = store.auditLog.slice(0, 500);
+}
+
+function normalizeUserPermissions(input = {}) {
+  return {
+    agents: input.agents !== false,
+    customers: input.customers !== false,
+    quote: input.quote !== false,
+    tasks: input.tasks !== false,
+    insight: input.insight === true
+  };
+}
+
+function effectivePermissions(user = {}) {
+  if (user.role === 'super_admin') {
+    return { agents: true, customers: true, quote: true, tasks: true, insight: true };
+  }
+  return normalizeUserPermissions(user.permissions ?? {});
+}
+
+function redactUser(user) {
+  const { password, passwordHash, ...safe } = user;
+  return safe;
 }
 
 function hashPassword(password) {
@@ -368,7 +398,10 @@ app.post('/api/login', async (req, res) => {
   const { userId, password } = req.body ?? {};
   const store = await readStore();
   const user = store.users.find((item) => item.id === userId);
+  const pending = (store.pendingRegistrations ?? []).find((item) => item.id === userId);
+  if (!user && pending && verifyPassword(pending, password)) return res.status(403).json({ error: 'registration_pending' });
   if (!user || !verifyPassword(user, password)) return res.status(401).json({ error: 'invalid_credentials' });
+  if (user.approvalStatus === 'pending') return res.status(403).json({ error: 'registration_pending' });
   if (user.active === false) return res.status(403).json({ error: 'user_suspended' });
   if (!user.passwordHash) {
     user.passwordHash = hashPassword(password);
@@ -376,8 +409,17 @@ app.post('/api/login', async (req, res) => {
     recordAudit(store, user.id, 'password.migrated', { userId: user.id });
     await writeStore(store);
   }
-  const token = sign({ userId: user.id, role: user.role, name: user.name, iat: Date.now(), exp: Date.now() + SESSION_TTL_MS });
-  res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+  const permissions = effectivePermissions(user);
+  const token = sign({
+    userId: user.id,
+    role: user.role,
+    name: user.name,
+    businessRole: user.businessRole || 'tester',
+    permissions,
+    iat: Date.now(),
+    exp: Date.now() + SESSION_TTL_MS
+  });
+  res.json({ token, user: { id: user.id, name: user.name, role: user.role, businessRole: user.businessRole || 'tester', permissions } });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -398,28 +440,74 @@ app.post('/api/register', async (req, res) => {
   if (String(password).length < 8) return res.status(400).json({ error: 'password_too_short' });
 
   const store = await readStore();
-  if (store.users.some((item) => item.id === cleanId)) return res.status(409).json({ error: 'user_exists' });
+  store.pendingRegistrations ??= [];
+  if (store.users.some((item) => item.id === cleanId) || store.pendingRegistrations.some((item) => item.id === cleanId)) {
+    return res.status(409).json({ error: 'user_exists' });
+  }
 
-  store.users.push({ id: cleanId, name: cleanName, role: 'coworker', passwordHash: hashPassword(password), active: true });
-  store.agents[cleanId] = {
+  const pending = {
     id: cleanId,
-    name: `${cleanName}_AI`,
-    ownerId: cleanId,
+    name: cleanName,
+    passwordHash: hashPassword(password),
+    requestedAt: new Date().toISOString(),
+    approvalStatus: 'pending'
+  };
+  store.pendingRegistrations.unshift(pending);
+  recordAudit(store, cleanId, 'user.registration_requested', { userId: cleanId });
+  await writeStore(store);
+  res.status(202).json({ pending: true, message: 'registration_pending' });
+});
+
+app.post('/api/admin/registrations/:id/approve', requireAuth, requireJamie, async (req, res) => {
+  const store = await readStore();
+  store.pendingRegistrations ??= [];
+  const index = store.pendingRegistrations.findIndex((item) => item.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'registration_not_found' });
+  const pending = store.pendingRegistrations[index];
+  const permissions = normalizeUserPermissions(req.body?.permissions);
+  const businessRole = businessRoles.has(req.body?.businessRole) ? req.body.businessRole : 'sales';
+  const user = {
+    id: pending.id,
+    name: req.body?.name ? String(req.body.name).slice(0, 80) : pending.name,
+    role: 'coworker',
+    businessRole,
+    permissions,
+    passwordHash: pending.passwordHash,
+    active: true,
+    approvalStatus: 'approved',
+    approvedBy: req.session.userId,
+    approvedAt: new Date().toISOString()
+  };
+  store.users.push(user);
+  store.agents[user.id] = {
+    id: user.id,
+    name: `${user.name}_AI`,
+    ownerId: user.id,
     modelTier: 'lite',
     provider: 'claude',
     apiModel: 'claude-3-5-haiku',
     active: true
   };
-  store.conversations[cleanId] = [
-    { at: new Date().toISOString(), from: 'agent', text: `${cleanName}，你的专属助理已经创建。` }
+  store.conversations[user.id] = [
+    { at: new Date().toISOString(), from: 'agent', text: `${user.name}，你的专属助理已经开通。` }
   ];
-  store.savedOpportunities[cleanId] = [];
-  store.usage[cleanId] = emptyUsage();
-  recordAudit(store, cleanId, 'user.registered', { userId: cleanId });
+  store.savedOpportunities[user.id] = [];
+  store.usage[user.id] = emptyUsage();
+  store.pendingRegistrations.splice(index, 1);
+  recordAudit(store, req.session.userId, 'user.registration_approved', { userId: user.id, businessRole, permissions });
   await writeStore(store);
+  res.json({ user: redactUser(user), pendingRegistrations: store.pendingRegistrations });
+});
 
-  const token = sign({ userId: cleanId, role: 'coworker', name: cleanName, iat: Date.now(), exp: Date.now() + SESSION_TTL_MS });
-  res.status(201).json({ token, user: { id: cleanId, name: cleanName, role: 'coworker' } });
+app.post('/api/admin/registrations/:id/reject', requireAuth, requireJamie, async (req, res) => {
+  const store = await readStore();
+  store.pendingRegistrations ??= [];
+  const index = store.pendingRegistrations.findIndex((item) => item.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'registration_not_found' });
+  const [pending] = store.pendingRegistrations.splice(index, 1);
+  recordAudit(store, req.session.userId, 'user.registration_rejected', { userId: pending.id });
+  await writeStore(store);
+  res.json({ pendingRegistrations: store.pendingRegistrations });
 });
 
 app.get('/api/state', requireAuth, async (req, res) => {
@@ -602,7 +690,7 @@ app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   const { id } = req.params;
   if (!fixedSystemAgentIds.includes(id)) return res.status(404).json({ error: 'system_agent_not_found' });
   if (id === 'internal' && req.session.role !== 'super_admin') return res.status(403).json({ error: 'jamie_only' });
-  if (workflowSystemAgentIds.has(id) && !canUseWorkflowAgent(req.session)) {
+  if (workflowSystemAgentIds.has(id) && !canUseWorkflowAgent(req.session, id)) {
     return res.status(403).json({ error: 'workflow_owner_only' });
   }
   const store = await readStore();
@@ -755,6 +843,7 @@ app.post('/api/broadcasts/:id/feedback', requireAuth, async (req, res) => {
 });
 
 app.post('/api/tasks', requireAuth, async (req, res) => {
+  if (req.session.permissions?.tasks === false) return res.status(403).json({ error: 'tasks_forbidden' });
   const store = await readStore();
   const task = normalizeTaskInput(req.body ?? {}, req.session.userId);
   store.tasks ??= [];
@@ -765,6 +854,7 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
 });
 
 app.post('/api/tasks/from-message', requireAuth, async (req, res) => {
+  if (req.session.permissions?.tasks === false) return res.status(403).json({ error: 'tasks_forbidden' });
   const { ownerId = req.session.userId, text = '', source = '个人助理对话' } = req.body ?? {};
   if (req.session.role !== 'super_admin' && req.session.userId !== ownerId) return res.status(403).json({ error: 'private_workspace' });
   const store = await readStore();
@@ -785,12 +875,13 @@ app.post('/api/tasks/from-message', requireAuth, async (req, res) => {
 });
 
 app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
+  if (req.session.permissions?.tasks === false) return res.status(403).json({ error: 'tasks_forbidden' });
   const store = await readStore();
   const task = (store.tasks ?? []).find((item) => item.id === req.params.id);
   if (!task) return res.status(404).json({ error: 'task_not_found' });
   if (!canEditTask(req.session, task)) return res.status(403).json({ error: 'task_forbidden' });
   const previousStatus = task.status;
-  const allowed = ['title', 'tag', 'owner', 'due', 'priority', 'status', 'next', 'result'];
+  const allowed = ['title', 'tag', 'owner', 'due', 'priority', 'status', 'next', 'result', 'evaluation', 'relatedCustomerId', 'relatedQuoteId', 'relatedOpportunityId'];
   for (const key of allowed) {
     if (req.body?.[key] !== undefined) task[key] = req.body[key];
   }
@@ -1202,7 +1293,7 @@ function getSystemAgentSpec(id) {
       '你不要维护客户阶段，不要分配任务状态，不要扫描外部网站；正式对外报价必须由负责人审核。',
       '你的目标是把客户需求转成内部报价草案，不直接承诺正式价格；重要报价必须提醒提交 Jamie 审批。',
       '重点提取：客户背景、报价类型（设备/服务/材料试制/工艺验证/打包）、缺失参数、风险、报价组成、参考依据、价格区间、交付周期、需要同事补充的信息。',
-      '请只返回 JSON：{"title":"...","text":"...","learning":"...","quote":{"customer":"...","type":"设备报价|熔炼服务|材料试制|工艺验证|打包方案","summary":"...","components":["..."],"basis":["过往报价案例...","市场价格参考...","内部专家依据..."],"priceRange":"...","missing":["..."],"risk":["..."],"next":"...","approval":"需要 Jamie 审批|Larry 可继续补充"},"broadcast":{"title":"...","content":"..."}}。',
+      '请只返回 JSON：{"title":"...","text":"...","learning":"...","quote":{"customer":"...","type":"设备报价|熔炼服务|材料试制|工艺验证|打包方案","summary":"...","components":["..."],"technicalParams":["..."],"costStructure":["..."],"basis":["过往报价案例...","市场价格参考...","内部专家依据..."],"priceRange":"...","negotiableSpace":"...","confirmQuestions":["..."],"missing":["..."],"risk":["..."],"next":"...","approval":"需要 Jamie 审批|Larry 可继续补充"},"broadcast":{"title":"...","content":"..."}}。',
       'broadcast 写给 Larry 和相关同事，推动补齐参数，而不是把报价发给客户。'
     ].join('\n');
   }
@@ -1407,8 +1498,12 @@ function fallbackQuoteDraft() {
     type: '打包方案',
     summary: '先判断客户是需要设备整机、熔炼服务、材料试制，还是设备加服务组合。',
     components: ['设备/服务范围', '材料体系', '检测要求', '交付周期', '质保和验收边界'],
+    technicalParams: ['材料体系', '单炉重量', '目标温度/真空度', '检测标准'],
+    costStructure: ['设备/服务成本', '材料与耗材', '检测与报告', '交付与质保'],
     basis: ['历史报价案例：待匹配', '市场同类设备/服务价格：待核验', '内部设备与材料专家经验：可引用'],
     priceRange: '待补齐参数后生成内部区间',
+    negotiableSpace: '待确认客户预算、交付周期和服务范围后判断',
+    confirmQuestions: ['预算范围', '交付时间', '验收标准', '是否需要检测报告'],
     missing: ['材料体系', '单炉重量', '批次数', '检测要求', '交付时间', '客户预算'],
     risk: ['参数不足导致报价偏差', '交付周期和质保边界需要明确', '正式报价前需要 Jamie 审批'],
     next: 'Larry 牵头补齐客户需求，报价 Agent 生成内部草案后提交 Jamie 审批。',
@@ -1448,10 +1543,12 @@ function normalizeTaskInput(input, actorId) {
     collaborators: Array.isArray(input.collaborators) ? input.collaborators.map((id) => String(id).toLowerCase()) : [],
     due: String(input.due || '待定').slice(0, 40),
     priority: ['high', 'medium', 'low'].includes(input.priority) ? input.priority : 'medium',
-    status: ['todo', 'progress', 'review', 'done', 'blocked', 'cancelled'].includes(input.status) ? input.status : 'todo',
+    status: ['todo', 'progress', 'review', 'done', 'closed', 'blocked', 'cancelled'].includes(input.status) ? input.status : 'todo',
     source: String(input.source || '手动创建').slice(0, 80),
     next: String(input.next || '确认下一步动作。').slice(0, 500),
     result: input.result ? String(input.result).slice(0, 500) : '',
+    evaluation: input.evaluation ? String(input.evaluation).slice(0, 500) : '',
+    relatedCustomerId: input.relatedCustomerId || '',
     relatedQuoteId: input.relatedQuoteId || '',
     relatedOpportunityId: input.relatedOpportunityId || '',
     createdAt: new Date().toISOString(),
@@ -1659,6 +1756,15 @@ function createQuoteDraftFromText({ text, ownerId, actorId, customerName }) {
     '市场价格参考：同类真空炉、熔炼服务、电商/公开供应商报价待核验',
     '内部专家依据：设备参数、材料难度、检测要求和交付风险'
   ];
+  const technicalParams = [
+    /材料|合金|靶材/.test(text) ? '材料体系已出现，需要进一步确认牌号/纯度' : '材料体系待确认',
+    /重量|kg|公斤|批次|炉/.test(text) ? '单炉重量/批次已出现，需要核实单位' : '单炉重量/批次待确认',
+    /温度|℃|真空|Pa/.test(text) ? '温度/真空度已有线索，需要转成验收指标' : '温度与真空度待确认',
+    /检测|成分|报告/.test(text) ? '检测报告要求已出现' : '检测要求待确认'
+  ];
+  const costStructure = quoteType === '设备报价'
+    ? ['设备主机成本', '真空/感应/冷却模块', '安装调试', '备件耗材', '质保服务']
+    : ['材料与预处理', '熔炼批次工时', '检测报告', '包装交付', '工艺记录'];
   return {
     id: `quote-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
     at: new Date().toISOString(),
@@ -1668,8 +1774,12 @@ function createQuoteDraftFromText({ text, ownerId, actorId, customerName }) {
     type: quoteType,
     summary: truncateText(`基于 ${quoteType} 需求形成内部报价草案：${String(text).replace(/\s+/g, ' ')}`, 360),
     components,
+    technicalParams,
+    costStructure,
     basis,
     priceRange: missing.length <= 2 ? '可生成初步区间；正式价格需负责人审核' : '参数不足，暂不生成金额，只输出报价依据和缺失项',
+    negotiableSpace: '可围绕交付周期、检测报告深度、服务范围和质保边界谈判。',
+    confirmQuestions: missing.length ? missing : ['客户预算', '验收标准', '交付节点'],
     missing,
     risk,
     next: '先补齐关键参数，再由报价 Agent 生成内部草案；正式对外报价前需要负责人审核。',
@@ -1804,8 +1914,12 @@ function persistSystemAgentArtifacts(store, id, output, actorId) {
       type: output.quote.type || '打包方案',
       summary: output.quote.summary || output.text || '',
       components: Array.isArray(output.quote.components) ? output.quote.components : [],
+      technicalParams: Array.isArray(output.quote.technicalParams) ? output.quote.technicalParams : [],
+      costStructure: Array.isArray(output.quote.costStructure) ? output.quote.costStructure : [],
       basis: Array.isArray(output.quote.basis) ? output.quote.basis : [],
       priceRange: output.quote.priceRange || '待补齐参数后生成内部区间',
+      negotiableSpace: output.quote.negotiableSpace || '待确认客户预算和服务范围',
+      confirmQuestions: Array.isArray(output.quote.confirmQuestions) ? output.quote.confirmQuestions : [],
       missing: Array.isArray(output.quote.missing) ? output.quote.missing : [],
       risk: Array.isArray(output.quote.risk) ? output.quote.risk : [],
       next: output.quote.next || '补齐报价参数并形成内部草案。',
@@ -2032,7 +2146,8 @@ function createSystemAgentBroadcast(store, actorId, output) {
 function redactPasswords(store) {
   return {
     ...store,
-    users: store.users.map(({ password, passwordHash, ...user }) => user)
+    users: store.users.map(({ password, passwordHash, ...user }) => user),
+    pendingRegistrations: (store.pendingRegistrations ?? []).map(({ passwordHash, ...item }) => item)
   };
 }
 
