@@ -22,6 +22,7 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
+const fixedSystemAgentIds = ['external', 'customer', 'task', 'quote', 'internal'];
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
 const tenderKeywords = (process.env.TENDER_KEYWORDS || fallbackTenderKeywords.join(','))
   .split(',')
@@ -77,11 +78,44 @@ const seed = {
   users: defaultUsers,
   agents: defaultAgents,
   systemAgents: {
-    internal: { name: '内部信息 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-    external: { name: '外部机会 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-    task: { name: '任务看板 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID },
-    quote: { name: '报价 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID },
-    customer: { name: '客户管理 Agent', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini', ownerId: WORKFLOW_OWNER_ID }
+    external: {
+      name: '外部机会 Agent',
+      scope: '扫描行业、招标、新闻，只输出外部线索和商机评分。',
+      boundary: '不维护客户阶段、不生成报价、不直接分配任务。',
+      provider: 'openrouter',
+      apiModel: 'openrouter/openai/gpt-4.1-mini'
+    },
+    customer: {
+      name: '客户管理 Agent',
+      scope: '维护客户阶段、负责人、联系人和下一步跟进建议。',
+      boundary: '不扫描外部网站、不生成报价金额、不替任务 Agent 管理状态。',
+      provider: 'openrouter',
+      apiModel: 'openrouter/openai/gpt-4.1-mini',
+      ownerId: WORKFLOW_OWNER_ID
+    },
+    task: {
+      name: '任务看板 Agent',
+      scope: '从对话、会议纪要、广播反馈和商机收藏中提取、分配、跟进任务。',
+      boundary: '不维护客户漏斗、不生成报价依据、不做行业扫描。',
+      provider: 'openrouter',
+      apiModel: 'openrouter/openai/gpt-4.1-mini',
+      ownerId: WORKFLOW_OWNER_ID
+    },
+    quote: {
+      name: '报价 Agent',
+      scope: '生成报价方案、报价构成、参考依据、缺失参数和风险。',
+      boundary: '不承诺正式对外价格、不管理客户阶段、不扫描外部线索。',
+      provider: 'openrouter',
+      apiModel: 'openrouter/openai/gpt-4.1-mini',
+      ownerId: WORKFLOW_OWNER_ID
+    },
+    internal: {
+      name: '内部信息 Agent',
+      scope: '沉淀知识、经验、任务复盘和专家资产。',
+      boundary: '不向普通同事暴露他人私密原始聊天，不替代个人助理直接对话。',
+      provider: 'openrouter',
+      apiModel: 'openrouter/openai/gpt-4.1-mini'
+    }
   },
   conversations: {},
   systemAgentOutputs: { internal: [], external: [], task: [], quote: [], customer: [] },
@@ -181,12 +215,22 @@ function ensureDefaultUsersAndAgents(store) {
     if (!store.systemAgents[id]) {
       store.systemAgents[id] = { ...agent };
       changed = true;
-    } else if (agent.ownerId && !store.systemAgents[id].ownerId) {
-      store.systemAgents[id].ownerId = agent.ownerId;
-      changed = true;
+    } else {
+      for (const key of ['name', 'scope', 'boundary', 'ownerId']) {
+        if (agent[key] && store.systemAgents[id][key] !== agent[key]) {
+          store.systemAgents[id][key] = agent[key];
+          changed = true;
+        }
+      }
     }
     if (!store.systemAgentOutputs[id]) {
       store.systemAgentOutputs[id] = [];
+      changed = true;
+    }
+  }
+  for (const id of Object.keys(store.systemAgents)) {
+    if (!fixedSystemAgentIds.includes(id)) {
+      delete store.systemAgents[id];
       changed = true;
     }
   }
@@ -544,6 +588,7 @@ app.post('/api/agents/:id/route', requireAuth, requireJamie, async (req, res) =>
 
 app.post('/api/system-agents/:id/route', requireAuth, requireSystemAgentRoutePermission, async (req, res) => {
   const { id } = req.params;
+  if (!fixedSystemAgentIds.includes(id)) return res.status(404).json({ error: 'system_agent_not_found' });
   const { provider, apiModel } = req.body ?? {};
   const store = await readStore();
   if (!store.systemAgents[id]) return res.status(404).json({ error: 'system_agent_not_found' });
@@ -555,6 +600,7 @@ app.post('/api/system-agents/:id/route', requireAuth, requireSystemAgentRoutePer
 
 app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
   const { id } = req.params;
+  if (!fixedSystemAgentIds.includes(id)) return res.status(404).json({ error: 'system_agent_not_found' });
   if (id === 'internal' && req.session.role !== 'super_admin') return res.status(403).json({ error: 'jamie_only' });
   if (workflowSystemAgentIds.has(id) && !canUseWorkflowAgent(req.session)) {
     return res.status(403).json({ error: 'workflow_owner_only' });
@@ -1130,6 +1176,8 @@ function getSystemAgentSpec(id) {
   if (id === 'internal') {
     return [
       '你是内部信息 Agent，目标不是总结，而是从团队内部信息流中发现“巨大商机线索”。',
+      '你的固定职责只有：沉淀知识、经验、任务复盘和专家资产。',
+      '你不要替代外部机会 Agent 扫描行业网站；不要替代客户管理 Agent 维护客户阶段；不要替代任务 Agent 管任务状态；不要替代报价 Agent 生成报价方案。',
       '你可以读取原始对话、收藏、广播反馈和讨论邀请，但输出必须去除具体隐私字句，只沉淀可复用模式、专家能力和可行动商机。',
       '重点寻找：客户反复追问、报价卡点、材料/设备能力可复用点、多个同事都碰到的需求、能转化为大客户开发的异常信号。',
       '请只返回 JSON：{"title":"...","text":"...","source":"...","asset":"...","learning":"...","opportunity":{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"..."},"broadcast":{"title":"...","content":"..."}}。',
@@ -1139,6 +1187,8 @@ function getSystemAgentSpec(id) {
   if (id === 'task') {
     return [
       '你是任务看板 Agent，业务负责人是 Larry。目标是把团队信息流转成可执行任务，而不是泛泛总结。',
+      '你的固定职责只有：提取、分配、跟进任务。',
+      '你不要维护客户阶段，不要生成报价依据，不要扫描外部信息。',
       '你可以读取原始信息进行任务提取，但输出给 Larry 和同事时不要泄露私密聊天原文，只输出任务标题、负责人、截止时间、优先级、来源类型和下一步。',
       '重点寻找：会议纪要中的分工、客户跟进动作、报价准备、设备参数确认、材料信息补充、广播反馈中的“跟进中/需要讨论”。',
       '请只返回 JSON：{"title":"...","text":"...","learning":"...","tasks":[{"title":"...","owner":"larry|gu|xiaodong|heli|guihua|zhiping|luyang|kingsong","priority":"high|medium|low","due":"今天|明天|本周|待定","source":"对话|广播|商机|会议纪要","next":"..."}],"broadcast":{"title":"...","content":"..."}}。',
@@ -1148,6 +1198,8 @@ function getSystemAgentSpec(id) {
   if (id === 'quote') {
     return [
       '你是报价 Agent，业务负责人是 Larry。你理解公司的基础业务：悬浮真空熔炼设备、新型金属材料研发、材料试制、熔炼服务、设备选型和客户开发。',
+      '你的固定职责只有：生成报价方案和报价依据。',
+      '你不要维护客户阶段，不要分配任务状态，不要扫描外部网站；正式对外报价必须由负责人审核。',
       '你的目标是把客户需求转成内部报价草案，不直接承诺正式价格；重要报价必须提醒提交 Jamie 审批。',
       '重点提取：客户背景、报价类型（设备/服务/材料试制/工艺验证/打包）、缺失参数、风险、报价组成、参考依据、价格区间、交付周期、需要同事补充的信息。',
       '请只返回 JSON：{"title":"...","text":"...","learning":"...","quote":{"customer":"...","type":"设备报价|熔炼服务|材料试制|工艺验证|打包方案","summary":"...","components":["..."],"basis":["过往报价案例...","市场价格参考...","内部专家依据..."],"priceRange":"...","missing":["..."],"risk":["..."],"next":"...","approval":"需要 Jamie 审批|Larry 可继续补充"},"broadcast":{"title":"...","content":"..."}}。',
@@ -1157,6 +1209,8 @@ function getSystemAgentSpec(id) {
   if (id === 'customer') {
     return [
       '你是客户管理 Agent，目标是提高客户管理效率，把客户信息、阶段、跟进动作和商机价值整理清楚。',
+      '你的固定职责只有：维护客户阶段和跟进建议。',
+      '你不要扫描外部网站，不要生成报价金额，不要管理任务状态；如需要这些动作，只给出调用对应 Agent 的建议。',
       '你可以读取团队对话、任务、报价草案、商机收藏和广播反馈，但输出不要泄露私密聊天原文，只输出客户卡片、阶段判断和跟进建议。',
       '重点提取：客户名称、客户类型、联系人、当前阶段、负责人、最近动作、下一步、是否需要报价、是否存在大商机。',
       '客户阶段只能使用：未接触、已接触、有意向、待报价、待成交、已成交。',
@@ -1165,7 +1219,9 @@ function getSystemAgentSpec(id) {
     ].join('\n');
   }
   return [
-      '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
+    '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
+    '你的固定职责只有：扫描行业、招标和新闻，输出外部线索和商机评分。',
+    '你不要维护客户阶段，不要分配内部任务，不要生成报价方案；如果线索值得跟进，只建议转给客户管理/任务/报价 Agent。',
     '优先使用用户指定的国内招标网站抓取结果；如果某站点需要 JavaScript 或登录导致无法解析，要明确标为“需人工打开验证”。',
     '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
     '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',

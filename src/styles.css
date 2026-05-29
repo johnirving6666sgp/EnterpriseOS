@@ -1160,6 +1160,54 @@ select {
   margin-top: 12px;
 }
 
+.agent-boundary-panel {
+  margin-top: 12px;
+}
+
+.agent-boundary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.agent-boundary-grid article {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.agent-boundary-grid strong,
+.agent-boundary-grid span,
+.agent-boundary-grid small {
+  display: block;
+}
+
+.agent-boundary-grid span {
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #155e52;
+  background: #ecfff4;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.agent-boundary-grid p,
+.agent-boundary-grid small {
+  margin: 0;
+  color: #667085;
+  line-height: 1.45;
+}
+
+.agent-boundary-grid small {
+  color: #9f1239;
+  font-weight: 750;
+}
+
 .system-agent-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1534,6 +1582,7 @@ select {
   .workflow-agent-panel,
   .workflow-task-grid,
   .system-agent-grid,
+  .agent-boundary-grid,
   .broadcast-form,
   .feedback-summary,
   .task-board,

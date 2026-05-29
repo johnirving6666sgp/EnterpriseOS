@@ -75,25 +75,25 @@ const providerOptions = [
 
 const systemAgents = [
   {
-    id: 'internal',
-    name: '内部信息 Agent',
-    job: '读取小团队试用对话、提炼协作洞察、沉淀专家资产',
-    defaultProvider: 'openrouter',
-    defaultModel: 'openrouter/openai/gpt-4.1-mini',
-    reason: '需要稳定归纳和较低试用成本，默认走 OpenRouter 的 GPT-4.1 mini；重要专家资产可临时升 GPT-4.1。'
-  },
-  {
     id: 'external',
     name: '外部机会 Agent',
-    job: '抓取新闻和企业动态，筛选商机并匹配内部专家能力',
+    job: '扫描行业、招标、新闻，只输出外部线索和商机评分',
     defaultProvider: 'openrouter',
     defaultModel: 'openrouter/openai/gpt-4.1-mini',
     reason: '需要高吞吐、多来源路由和成本控制，默认走 OpenRouter GPT-4.1 mini；深度研判再升 GPT-4.1。'
   },
   {
+    id: 'customer',
+    name: '客户管理 Agent',
+    job: '维护客户阶段、负责人、联系人和下一步跟进建议',
+    defaultProvider: 'openrouter',
+    defaultModel: 'openrouter/openai/gpt-4.1-mini',
+    reason: '客户管理需要频繁整理和跟进，默认 GPT-4.1 mini；复杂客户画像可升 GPT-4.1。'
+  },
+  {
     id: 'task',
     name: '任务看板 Agent',
-    job: '把对话、会议纪要、广播反馈和商机收藏转成任务，看板负责人为 Larry',
+    job: '从对话、会议纪要、广播反馈和商机收藏中提取、分配、跟进任务',
     defaultProvider: 'openrouter',
     defaultModel: 'openrouter/openai/gpt-4.1-mini',
     reason: '需要高频提取行动项，默认用低成本模型；复杂会议纪要可临时升 GPT-4.1。'
@@ -101,19 +101,28 @@ const systemAgents = [
   {
     id: 'quote',
     name: '报价 Agent',
-    job: '理解设备、熔炼服务和材料试制报价结构，协助 Larry 生成内部报价草案',
+    job: '生成报价方案、报价构成、参考依据、缺失参数和风险',
     defaultProvider: 'openrouter',
     defaultModel: 'openrouter/openai/gpt-4.1-mini',
     reason: '报价需要稳妥、结构化和可审批，默认 GPT-4.1 mini；关键客户报价可升 GPT-4.1。'
   },
   {
-    id: 'customer',
-    name: '客户管理 Agent',
-    job: '整理客户阶段、负责人、联系人和下一步跟进动作，协助全员提高客户管理效率',
+    id: 'internal',
+    name: '内部信息 Agent',
+    job: '沉淀知识、经验、任务复盘和专家资产',
     defaultProvider: 'openrouter',
     defaultModel: 'openrouter/openai/gpt-4.1-mini',
-    reason: '客户管理需要频繁整理和跟进，默认 GPT-4.1 mini；复杂客户画像可升 GPT-4.1。'
+    reason: '需要稳定归纳和较低试用成本，默认走 OpenRouter 的 GPT-4.1 mini；重要专家资产可临时升 GPT-4.1。'
   }
+];
+
+const agentResponsibilityRules = [
+  { name: '个人助理 Agent', owner: '每位同事一个', scope: '个人私密交流、上传纪要、获得工作帮助', boundary: '不替系统 Agent 管理组织流程' },
+  { name: '外部机会 Agent', owner: '系统', scope: '扫描行业、招标、新闻', boundary: '不管客户阶段、不生成报价、不分配任务' },
+  { name: '客户管理 Agent', owner: '全员可用', scope: '维护客户阶段和跟进建议', boundary: '不扫外部网站、不生成报价金额' },
+  { name: '任务看板 Agent', owner: 'Larry 日常负责', scope: '提取、分配、跟进任务', boundary: '不维护客户漏斗、不生成报价依据' },
+  { name: '报价 Agent', owner: 'Larry 日常负责', scope: '生成报价方案和报价依据', boundary: '不承诺正式对外价格' },
+  { name: '内部信息 Agent', owner: 'Jamie 审查', scope: '沉淀知识、经验、复盘', boundary: '不向普通同事暴露私密原文' }
 ];
 
 const teammates = [
@@ -929,20 +938,20 @@ function EnterpriseApp({ auth, onLogout }) {
           <button className={visiblePage === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
             同事桌面
           </button>
-          <button className={visiblePage === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>
-            任务看板
+          <button className={visiblePage === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
+            商机雷达
           </button>
           <button className={visiblePage === 'crm' ? 'active' : ''} onClick={() => setPage('crm')}>
             客户管理
+          </button>
+          <button className={visiblePage === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>
+            任务看板
           </button>
           <button className={visiblePage === 'quote' ? 'active' : ''} onClick={() => setPage('quote')}>
             报价方案
           </button>
           <button className={visiblePage === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
             内部信息仓
-          </button>
-          <button className={visiblePage === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
-            商机雷达
           </button>
           <button className={visiblePage === 'broadcast' ? 'active' : ''} onClick={() => setPage('broadcast')}>
             广播中心
@@ -1075,7 +1084,7 @@ function EnterpriseApp({ auth, onLogout }) {
 }
 
 function BusinessFlowStrip() {
-  const steps = ['线索', '客户', '任务', '报价', '订单/交付', '回款/复盘'];
+  const steps = ['个人助理', '外部机会', '客户管理', '任务看板', '报价方案', '内部沉淀'];
   return (
     <section className="business-flow" aria-label="业务闭环">
       {steps.map((step, index) => (
@@ -2189,6 +2198,19 @@ function JamieCommander({
               </React.Fragment>
             );
           })}
+        </div>
+      </section>
+      <section className="panel agent-boundary-panel">
+        <h2>固定 Agent 分工</h2>
+        <div className="agent-boundary-grid">
+          {agentResponsibilityRules.map((rule) => (
+            <article key={rule.name}>
+              <strong>{rule.name}</strong>
+              <span>{rule.owner}</span>
+              <p>{rule.scope}</p>
+              <small>{rule.boundary}</small>
+            </article>
+          ))}
         </div>
       </section>
       <section className="panel system-agent-config">
