@@ -1242,12 +1242,6 @@ function BusinessDashboard({ broadcasts, customers, opportunities, quotes, saved
             </button>
           )) : <p className="empty-hint">暂无新的广播。</p>}
         </DashboardPanel>
-        <DashboardPanel title="我的 Agent 对话入口" action="开始对话" onAction={() => setPage('workspace')}>
-          <button className="dashboard-row primary" onClick={() => setPage('workspace')}>
-            <strong>把客户问题、会议纪要或报价想法发给个人助理</strong>
-            <span>已收藏 {savedCards.length} 条线索，可直接带回对话分析。</span>
-          </button>
-        </DashboardPanel>
       </div>
     </section>
   );
