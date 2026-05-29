@@ -1130,6 +1130,7 @@ function EnterpriseApp({ auth, onLogout }) {
           agentFeedback={agentFeedback}
           broadcasts={inboxBroadcasts}
           customers={myCustomers}
+          isJamie={isJamie}
           opportunities={allOpportunities}
           quotes={pendingQuotes}
           savedCards={savedCards}
@@ -1279,12 +1280,13 @@ function BusinessFlowStrip() {
   );
 }
 
-function BusinessDashboard({ agentFeedback, broadcasts, customers, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
+function BusinessDashboard({ agentFeedback, broadcasts, customers, isJamie, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
   const focusLeads = opportunities.slice(0, 3);
   const activeTasks = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).slice(0, 5);
   const activeQuotes = quotes.filter((quote) => quote.approval !== '已完成').slice(0, 3);
   const unreadBroadcasts = broadcasts.slice(0, 4);
   const learningItems = buildLearningDigest({ agentFeedback, systemOutputs, tasks, quotes, customers, savedCards });
+  const workPrompts = buildWorkPrompts({ isJamie, tasks, broadcasts, quotes, savedCards, agentFeedback });
   return (
     <section className="dashboard-page">
       <div className="dashboard-hero">
@@ -1300,6 +1302,21 @@ function BusinessDashboard({ agentFeedback, broadcasts, customers, opportunities
         </div>
         <button className="agent-run-button" onClick={() => setPage('workspace')}>进入我的 Agent 对话</button>
       </div>
+      <section className="work-prompt-panel">
+        <div>
+          <p className="eyebrow">{isJamie ? 'Agent Coach Prompt' : 'Work Prompt'}</p>
+          <h2>{isJamie ? '今天先推动 Agent 变得更好' : '今天按这 3 步开始工作'}</h2>
+        </div>
+        <div className="work-prompt-list">
+          {workPrompts.map((prompt) => (
+            <button key={prompt.title} onClick={() => prompt.page ? setPage(prompt.page) : startQuickPrompt(prompt.prompt)}>
+              <span>{prompt.label}</span>
+              <strong>{prompt.title}</strong>
+              <small>{prompt.text}</small>
+            </button>
+          ))}
+        </div>
+      </section>
       <div className="dashboard-grid">
         <DashboardPanel title="今日重点线索" action="去线索池" onAction={() => setPage('opportunity')}>
           {focusLeads.map((item) => (
@@ -2749,6 +2766,52 @@ function buildLearningDigest({ agentFeedback = [], systemOutputs = {}, tasks = [
     {
       title: '外部机会 Agent',
       text: savedCards.length ? `你已收藏 ${savedCards.length} 条线索，可继续带回对话分析。` : '收藏外部线索后，会自动进入个人助理和业务流程。'
+    }
+  ];
+}
+
+function buildWorkPrompts({ agentFeedback = [], broadcasts = [], isJamie, quotes = [], savedCards = [], tasks = [] }) {
+  if (isJamie) {
+    const weakFeedbackCount = agentFeedback.filter((item) => item.rating && item.rating !== 'useful').length;
+    return [
+      {
+        label: '1',
+        title: '看 Agent 是否真的帮到人',
+        text: `已有 ${weakFeedbackCount} 条改进反馈，先找出回答空泛或不准的 Agent。`,
+        prompt: '请帮我评估各个 Agent 最近的回复质量、低效点和优先改进动作。'
+      },
+      {
+        label: '2',
+        title: '检查业务流有没有闭环',
+        text: `${tasks.length} 个任务、${quotes.length} 个报价草案，重点看是否从对话走到结果。`,
+        page: 'tasks'
+      },
+      {
+        label: '3',
+        title: '推动系统学习',
+        text: '把同事反馈、任务结果和报价经验沉淀成下一轮提示词和知识资产。',
+        page: 'insight'
+      }
+    ];
+  }
+  return [
+    {
+      label: '1',
+      title: '把真实工作发给个人助理',
+      text: '客户问题、会议纪要、现场情况、报价想法都可以直接发。',
+      prompt: '我今天有一件工作需要处理，请帮我整理客户/需求/风险/下一步动作。'
+    },
+    {
+      label: '2',
+      title: '处理待办和协作邀请',
+      text: `${tasks.filter((task) => !['done', 'closed'].includes(task.status)).length} 个待处理任务，${broadcasts.length} 条广播/邀请。`,
+      page: tasks.length ? 'tasks' : 'broadcast'
+    },
+    {
+      label: '3',
+      title: '带着商机或报价继续聊',
+      text: savedCards.length ? `已收藏 ${savedCards.length} 条线索，可直接让 Agent 分析。` : '看到外部线索先收藏，再带回个人助理判断。',
+      page: savedCards.length ? 'workspace' : 'opportunity'
     }
   ];
 }

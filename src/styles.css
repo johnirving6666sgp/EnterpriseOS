@@ -206,6 +206,60 @@ button:disabled {
   font-weight: 900;
 }
 
+.work-prompt-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.work-prompt-panel h2 {
+  margin: 0;
+}
+
+.work-prompt-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.work-prompt-list button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  min-height: 96px;
+  padding: 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #172033;
+  background: #f8fafc;
+  text-align: left;
+}
+
+.work-prompt-list button span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #155e52;
+  font-weight: 900;
+}
+
+.work-prompt-list button strong,
+.work-prompt-list button small {
+  min-width: 0;
+}
+
+.work-prompt-list button small {
+  grid-column: 2;
+  color: #667085;
+  line-height: 1.4;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1809,6 +1863,7 @@ select {
   .workflow-task-grid,
   .system-agent-grid,
   .agent-boundary-grid,
+  .work-prompt-list,
   .dashboard-grid,
   .registration-list article,
   .broadcast-form,
