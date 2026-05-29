@@ -748,10 +748,32 @@ app.post('/api/opportunities/:id/save', requireAuth, async (req, res) => {
   const ownerId = req.session.userId;
   const store = await readStore();
   store.savedOpportunities[ownerId] ??= [];
-  if (!store.savedOpportunities[ownerId].includes(req.params.id)) store.savedOpportunities[ownerId].push(req.params.id);
-  recordAudit(store, ownerId, 'opportunity.saved', { opportunityId: req.params.id });
+  const alreadySaved = store.savedOpportunities[ownerId].includes(req.params.id);
+  if (!alreadySaved) store.savedOpportunities[ownerId].push(req.params.id);
+  const opportunity = normalizeSavedOpportunity(
+    req.body?.opportunity || findOpportunityById(store, req.params.id) || { id: req.params.id, title: req.params.id },
+    req.params.id
+  );
+  const createdArtifacts = alreadySaved
+    ? { tasks: [], quotes: [], customers: [], opportunities: [], knowledge: [] }
+    : materializeOpportunityPipeline(store, { opportunity, ownerId, actorId: req.session.userId });
+  recordAudit(store, ownerId, 'opportunity.saved', {
+    opportunityId: req.params.id,
+    customerIds: createdArtifacts.customers.map((item) => item.id),
+    taskIds: createdArtifacts.tasks.map((item) => item.id),
+    quoteIds: createdArtifacts.quotes.map((item) => item.id),
+    knowledgeIds: createdArtifacts.knowledge.map((item) => item.id)
+  });
   await writeStore(store);
-  res.json({ saved: store.savedOpportunities[ownerId] });
+  res.json({
+    saved: store.savedOpportunities[ownerId],
+    createdArtifacts,
+    tasks: visibleTasksForSession(store, req.session),
+    customers: visibleCustomersForSession(store, req.session),
+    quotes: visibleQuotesForSession(store, req.session),
+    generatedOpportunities: store.generatedOpportunities ?? [],
+    systemAgentOutputs: store.systemAgentOutputs ?? {}
+  });
 });
 
 app.post('/api/broadcasts', requireAuth, requireJamie, async (req, res) => {
@@ -1469,6 +1491,118 @@ function pickTenderSignal(data, tenderSignals = []) {
   if (!tenderSignals.length) return null;
   const dataTitle = String(data.title || '');
   return tenderSignals.find((item) => dataTitle && item.title.includes(dataTitle.slice(0, 10))) ?? tenderSignals[0];
+}
+
+function findOpportunityById(store, id) {
+  return (store.generatedOpportunities ?? []).find((item) => item.id === id) || null;
+}
+
+function normalizeSavedOpportunity(opportunity, fallbackId) {
+  return {
+    id: opportunity.id || fallbackId,
+    title: String(opportunity.title || fallbackId || '待验证商机线索').slice(0, 160),
+    source: String(opportunity.source || '线索池').slice(0, 160),
+    match: opportunity.match || '',
+    why: opportunity.why || '',
+    action: opportunity.action || '确认客户背景、真实需求、预算、采购时间和下一步跟进动作。',
+    urgency: opportunity.urgency || '',
+    url: opportunity.url || '',
+    date: opportunity.date || '',
+    quality: opportunity.quality || evaluateTextOpportunity(`${opportunity.title || ''} ${opportunity.why || ''} ${opportunity.action || ''}`),
+    recommendation: opportunity.recommendation || opportunity.quality?.recommendation || '',
+    recommendedOwner: opportunity.recommendedOwner || recommendOpportunityOwner(opportunity)
+  };
+}
+
+function materializeOpportunityPipeline(store, { opportunity, ownerId, actorId }) {
+  const createdArtifacts = { tasks: [], quotes: [], customers: [], opportunities: [], knowledge: [] };
+  store.generatedOpportunities ??= [];
+  if (!store.generatedOpportunities.some((item) => item.id === opportunity.id)) {
+    store.generatedOpportunities.unshift(opportunity);
+    store.generatedOpportunities = store.generatedOpportunities.slice(0, 30);
+    createdArtifacts.opportunities.push(opportunity);
+  }
+
+  const text = [opportunity.title, opportunity.source, opportunity.why, opportunity.action, opportunity.urgency].filter(Boolean).join('\n');
+  const responsible = opportunity.recommendedOwner || ownerId || WORKFLOW_OWNER_ID;
+  const customer = normalizeCustomerInsight(
+    {
+      name: inferCustomerName(text) || `${truncateText(opportunity.title, 28)} 潜在客户`,
+      type: inferCustomerType(text),
+      stage: opportunity.quality?.total >= 80 ? '有意向' : '未接触',
+      owner: responsible,
+      collaborators: responsible === ownerId ? [] : [ownerId],
+      contact: '待确认',
+      phone: '待确认',
+      last: '线索池收藏',
+      next: opportunity.action || '确认客户背景和下一步跟进动作。',
+      priority: opportunity.quality?.total >= 80 ? 'high' : 'medium'
+    },
+    actorId
+  );
+  const existingCustomer = store.customers.find((item) => item.name === customer.name);
+  upsertCustomers(store, [customer]);
+  const customerId = existingCustomer?.id || customer.id;
+  createdArtifacts.customers.push({ ...customer, id: customerId });
+
+  const task = normalizeTaskInput(
+    {
+      title: `验证线索并跟进客户：${opportunity.title}`,
+      owner: responsible,
+      collaborators: responsible === ownerId ? [] : [ownerId],
+      due: opportunity.quality?.timing >= 4 ? '今天' : '48 小时内',
+      priority: opportunity.quality?.total >= 80 ? 'high' : 'medium',
+      status: 'todo',
+      tag: '商机验证',
+      source: '线索池收藏',
+      next: [
+        opportunity.action,
+        `评分：需求 ${opportunity.quality?.demand ?? 3}/5，预算 ${opportunity.quality?.budget ?? 3}/5，时间 ${opportunity.quality?.timing ?? 3}/5，优势 ${opportunity.quality?.advantage ?? 3}/5。`
+      ].filter(Boolean).join('\n'),
+      relatedCustomerId: customerId,
+      relatedOpportunityId: opportunity.id
+    },
+    actorId
+  );
+  store.tasks ??= [];
+  store.tasks.unshift(task);
+  createdArtifacts.tasks.push(task);
+
+  if (/报价|询价|预算|设备|熔炼|采购|招标|服务|材料试制/.test(text)) {
+    const quote = createQuoteDraftFromText({ text, ownerId: responsible, actorId, customerName: customer.name });
+    quote.relatedCustomerId = customerId;
+    quote.relatedOpportunityId = opportunity.id;
+    store.quotes ??= [];
+    store.quotes.unshift(quote);
+    store.quotes = store.quotes.slice(0, 40);
+    createdArtifacts.quotes.push(quote);
+  }
+
+  const knowledge = createKnowledgeFromText({
+    text: `线索池收藏：${text}`,
+    ownerId: responsible,
+    actorId,
+    source: '线索池收藏',
+    agent: { name: '外部机会 Agent → 内部信息 Agent' }
+  });
+  store.knowledge ??= [];
+  store.knowledge.unshift(knowledge);
+  store.knowledge = store.knowledge.slice(0, 80);
+  store.systemAgentOutputs ??= {};
+  store.systemAgentOutputs.internal ??= [];
+  store.systemAgentOutputs.internal.unshift(knowledgeToInsight(knowledge));
+  store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
+  createdArtifacts.knowledge.push(knowledge);
+
+  return createdArtifacts;
+}
+
+function recommendOpportunityOwner(opportunity = {}) {
+  const text = `${opportunity.title ?? ''} ${opportunity.why ?? ''} ${opportunity.action ?? ''}`;
+  if (/材料|合金|靶材|高熵|难熔/.test(text)) return 'guihua';
+  if (/设备|熔炼炉|真空炉|冷坩埚|感应|电弧/.test(text)) return 'kingsong';
+  if (/客户|研究院|实验室|采购|招标|预算/.test(text)) return 'luyang';
+  return WORKFLOW_OWNER_ID;
 }
 
 function fallbackWorkflowTasks() {

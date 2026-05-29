@@ -657,10 +657,29 @@ function EnterpriseApp({ auth, onLogout }) {
   };
 
   const saveOpportunity = (id) => {
+    const card = allOpportunities.find((item) => item.id === id);
     setSavedByUser((current) => {
       const existing = current[workspaceId] ?? [];
       return existing.includes(id) ? current : { ...current, [workspaceId]: [...existing, id] };
     });
+    apiFetch(`/api/opportunities/${id}/save`, {
+      method: 'POST',
+      body: JSON.stringify({ opportunity: card })
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('opportunity_save_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (payload.saved) setSavedByUser((current) => ({ ...current, [workspaceId]: payload.saved }));
+        if (payload.tasks) setTasks(payload.tasks);
+        if (payload.customers) setCustomers(payload.customers);
+        if (payload.quotes) setQuotes(payload.quotes);
+        if (payload.generatedOpportunities) setGeneratedOpportunities(payload.generatedOpportunities);
+        if (payload.createdArtifacts) setLastWorkflowArtifacts(payload.createdArtifacts);
+        if (payload.systemAgentOutputs) setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
+      })
+      .catch(() => {});
   };
 
   const analyzeSaved = (card) => {
