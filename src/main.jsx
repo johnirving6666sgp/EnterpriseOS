@@ -369,6 +369,9 @@ function EnterpriseApp({ auth, onLogout }) {
   );
   const recognitionRef = useRef(null);
   const voiceActiveRef = useRef(false);
+  const voicePressedRef = useRef(false);
+  const voiceBaseDraftRef = useRef('');
+  const voiceFinalTranscriptRef = useRef('');
 
   const isJamie = auth.user.role === 'super_admin';
   const permissions = auth.user.permissions ?? { agents: true, customers: true, quote: true, tasks: true, insight: isJamie };
@@ -629,33 +632,70 @@ function EnterpriseApp({ auth, onLogout }) {
     });
   };
 
-  const startVoice = () => {
-    if (!SpeechRecognition || !access.active || voiceActiveRef.current) return;
+  const composeVoiceDraft = (interimText = '') => {
+    const base = voiceBaseDraftRef.current.trimEnd();
+    const voiceText = `${voiceFinalTranscriptRef.current}${interimText}`.trim();
+    return [base, voiceText].filter(Boolean).join(base && voiceText ? ' ' : '');
+  };
+
+  const startRecognition = () => {
+    if (!SpeechRecognition || !access.active || voiceActiveRef.current || !voicePressedRef.current) return;
     voiceActiveRef.current = true;
     const recognition = new SpeechRecognition();
     recognition.lang = 'zh-CN';
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onstart = () => setListening(true);
     recognition.onresult = (event) => {
-      const text = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? '')
-        .join('');
-      setDraft(text);
+      let interimText = '';
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index][0]?.transcript ?? '';
+        if (event.results[index].isFinal) {
+          voiceFinalTranscriptRef.current = `${voiceFinalTranscriptRef.current}${transcript}`;
+        } else {
+          interimText = `${interimText}${transcript}`;
+        }
+      }
+      setDraft(composeVoiceDraft(interimText));
     };
     recognition.onend = () => {
       voiceActiveRef.current = false;
+      if (voicePressedRef.current) {
+        window.setTimeout(startRecognition, 80);
+        return;
+      }
+      setDraft(composeVoiceDraft());
       setListening(false);
     };
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = () => {
+      voiceActiveRef.current = false;
+      if (voicePressedRef.current) {
+        window.setTimeout(startRecognition, 120);
+        return;
+      }
+      setListening(false);
+    };
     recognitionRef.current = recognition;
     recognition.start();
   };
 
+  const startVoice = () => {
+    if (!SpeechRecognition || !access.active || voicePressedRef.current) return;
+    voicePressedRef.current = true;
+    voiceBaseDraftRef.current = draft;
+    voiceFinalTranscriptRef.current = '';
+    startRecognition();
+  };
+
   const stopVoice = () => {
-    if (!voiceActiveRef.current) return;
+    voicePressedRef.current = false;
     voiceActiveRef.current = false;
-    recognitionRef.current?.stop();
+    setDraft(composeVoiceDraft());
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      recognitionRef.current?.abort?.();
+    }
     setListening(false);
   };
 
