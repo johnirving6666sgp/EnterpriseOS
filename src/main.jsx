@@ -301,6 +301,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [tasks, setTasks] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [customers, setCustomers] = useState(customerSeed);
+  const [lastWorkflowArtifacts, setLastWorkflowArtifacts] = useState(null);
   const [systemRunning, setSystemRunning] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
@@ -493,6 +494,21 @@ function EnterpriseApp({ auth, onLogout }) {
         }
         if (payload.createdTasks?.length) {
           setTasks((current) => mergeById(payload.createdTasks, current));
+        }
+        if (payload.createdArtifacts) {
+          setLastWorkflowArtifacts(payload.createdArtifacts);
+        }
+        if (payload.quotes) {
+          setQuotes(payload.quotes);
+        }
+        if (payload.customers) {
+          setCustomers(payload.customers);
+        }
+        if (payload.generatedOpportunities) {
+          setGeneratedOpportunities(payload.generatedOpportunities);
+        }
+        if (payload.systemAgentOutputs) {
+          setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
         }
       })
       .catch(() => {
@@ -964,6 +980,7 @@ function EnterpriseApp({ auth, onLogout }) {
           attachmentLoading={attachmentLoading}
           removeAttachment={removeAttachment}
           submitFeedback={submitFeedback}
+          lastWorkflowArtifacts={lastWorkflowArtifacts}
         />
       )}
 
@@ -1061,6 +1078,7 @@ function CoworkerWorkspace({
   discussionTeammates,
   draft,
   listening,
+  lastWorkflowArtifacts,
   messages,
   isThinking,
   broadcasts,
@@ -1248,6 +1266,7 @@ function CoworkerWorkspace({
             <button onClick={() => setPage('quote')}>报价</button>
           </div>
         </div>
+        <WorkflowArtifactsDock artifacts={lastWorkflowArtifacts} setPage={setPage} />
         <div className="broadcast-inbox">
           <strong>内部广播</strong>
           {broadcasts.length ? (
@@ -1313,6 +1332,35 @@ function CoworkerWorkspace({
         </div>
       </section>
     </section>
+  );
+}
+
+function WorkflowArtifactsDock({ artifacts, setPage }) {
+  if (!artifacts) return null;
+  const groups = [
+    { key: 'tasks', label: '任务', page: 'tasks' },
+    { key: 'customers', label: '客户', page: 'crm' },
+    { key: 'quotes', label: '报价草案', page: 'quote' },
+    { key: 'opportunities', label: '商机', page: 'opportunity' },
+    { key: 'knowledge', label: '知识沉淀', page: 'insight' }
+  ].map((group) => ({ ...group, items: artifacts[group.key] ?? [] })).filter((group) => group.items.length);
+
+  if (!groups.length) return null;
+
+  return (
+    <div className="workflow-artifacts-dock">
+      <strong>本次对话已进入业务流</strong>
+      <p>Agent 已把原始信息分流成可跟进的结构化资产。</p>
+      <div className="workflow-artifact-grid">
+        {groups.map((group) => (
+          <button key={group.key} onClick={() => setPage(group.page)}>
+            <span>{group.label}</span>
+            <b>{group.items.length}</b>
+            <small>{artifactPreview(group.items[0])}</small>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2171,6 +2219,10 @@ function priorityLabel(priority) {
   return ({ high: '高优先级', medium: '中优先级', low: '低优先级' })[priority] ?? '普通';
 }
 
+function artifactPreview(item) {
+  return item?.title || item?.name || item?.customer || item?.type || '已生成';
+}
+
 function getWorkspaceDailyLine(coworker) {
   const lines = [
     '今天把一个真实问题丢给我，我会帮你把它变成下一步行动。',
@@ -2210,6 +2262,15 @@ function makeReply(text, coworker, model, savedCards = [], conversationContext =
       `5. 对全员试用：让 ${teammates.map((item) => item.name).join('、')} 都围绕自己的真实工作输入信息，系统再从全员信息流里沉淀商机、任务和专家资产。`
     ].join('\n\n');
   }
+  if (/报价|航天|阀门|设备/.test(text)) {
+    return [
+      '我先按报价工作流处理，不只是聊天回复。',
+      '1. 客户与场景：先确认采购单位、应用工况、预算范围、交付时间和是否有招标节点。',
+      '2. 技术参数：补齐材料体系、温度/真空度、单炉重量、批次、检测要求和验收标准。',
+      '3. 报价边界：区分设备整机、熔炼服务、材料试制或组合方案，避免直接给出不完整价格。',
+      '4. 下一步：我会同步生成报价草案、客户跟进任务和需要确认的参数清单；正式报价前交给 Larry/Jamie 审核。'
+    ].join('\n\n');
+  }
   if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(text)) {
     return [
       '我先按“材料专家 + 市场开发助理”的方式处理，不只是记录这句话。',
@@ -2219,9 +2280,6 @@ function makeReply(text, coworker, model, savedCards = [], conversationContext =
       '4. 对外打法：先提供材料试制或工艺验证，再推进设备方案；这样客户决策门槛更低，也更容易发现真实预算。',
       `5. 我会把这条需求沉淀成 ${coworker.agent} 的私密市场开发任务，并同步给内部信息 Agent 提炼“材料专家资产”。当前用 ${model.label}，如果要写正式客户方案，建议临时升到均衡或强模型。`
     ].join('\n\n');
-  }
-  if (/报价|航天|阀门|设备/.test(text)) {
-    return `我先把它拆成四件事：客户应用场景、关键设备参数、报价风险、下一步沟通提纲。当前用${model.label}（${model.short}）可以做初筛；如果要形成正式报价方案，建议 Jamie 临时切到强模型。`;
   }
   if (/商机|收藏|机会/.test(text)) {
     const saved = savedCards.length ? `当前已收藏 ${savedCards.length} 条雷达线索，我会优先匹配这些线索。` : '你还没有收藏雷达线索，我会先基于当前问题做初步判断。';

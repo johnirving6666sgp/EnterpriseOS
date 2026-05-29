@@ -101,6 +101,7 @@ const seed = {
   generatedOpportunities: [],
   tasks: defaultTasks,
   quotes: [],
+  knowledge: [],
   customers: [
     { id: 'customer-east-research', name: '华东有色金属研究院', type: '科研机构', stage: '洽谈中', owner: 'luyang', contact: '张主任', phone: '138****8888', last: '5 天前', next: '确认设备升级预算和材料试制需求。' },
     { id: 'customer-sh-aerospace', name: '上海航天设备制造', type: '航天军工', stage: '报价阶段', owner: 'larry', contact: '李工', phone: '139****6666', last: '今天', next: '补齐高压阀门参数和交付周期。' },
@@ -182,6 +183,7 @@ function ensureDefaultUsersAndAgents(store) {
   store.savedOpportunities ??= {};
   store.tasks ??= [];
   store.quotes ??= [];
+  store.knowledge ??= [];
   store.customers ??= [];
   store.usage ??= {};
   store.auditLog ??= [];
@@ -450,12 +452,14 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
     agentReply = generated.reply;
     llm = generated.llm;
   }
-  const createdTasks = deriveTasksFromMessage({
+  const createdArtifacts = deriveWorkflowArtifactsFromMessage({
     actorId: req.session.userId,
     ownerId: id,
     message: messageForContext,
     reply: agentReply,
-    attachments: cleanAttachments
+    attachments: cleanAttachments,
+    agent,
+    user
   });
   store.conversations[id] ??= [];
   store.conversations[id].push({
@@ -468,14 +472,52 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: agentReply });
   const usage = calculateUsage(messageForContext, agentReply, agent.modelTier);
   store.usage[id] = mergeUsage(store.usage[id], usage);
-  if (createdTasks.length) {
+  if (createdArtifacts.tasks.length) {
     store.tasks ??= [];
-    store.tasks.unshift(...createdTasks);
-    recordAudit(store, req.session.userId, 'task.auto_created_from_chat', { agentId: id, taskIds: createdTasks.map((task) => task.id) });
+    store.tasks.unshift(...createdArtifacts.tasks);
+    recordAudit(store, req.session.userId, 'task.auto_created_from_chat', { agentId: id, taskIds: createdArtifacts.tasks.map((task) => task.id) });
+  }
+  if (createdArtifacts.quotes.length) {
+    store.quotes ??= [];
+    store.quotes.unshift(...createdArtifacts.quotes);
+    store.quotes = store.quotes.slice(0, 40);
+    recordAudit(store, req.session.userId, 'quote.auto_created_from_chat', { agentId: id, quoteIds: createdArtifacts.quotes.map((quote) => quote.id) });
+  }
+  if (createdArtifacts.customers.length) {
+    store.customers ??= [];
+    upsertCustomers(store, createdArtifacts.customers);
+    recordAudit(store, req.session.userId, 'customer.auto_upserted_from_chat', { agentId: id, customers: createdArtifacts.customers.map((customer) => customer.name) });
+  }
+  if (createdArtifacts.opportunities.length) {
+    store.generatedOpportunities ??= [];
+    store.generatedOpportunities.unshift(...createdArtifacts.opportunities);
+    store.generatedOpportunities = store.generatedOpportunities.slice(0, 30);
+    recordAudit(store, req.session.userId, 'opportunity.auto_created_from_chat', { agentId: id, opportunityIds: createdArtifacts.opportunities.map((item) => item.id) });
+  }
+  if (createdArtifacts.knowledge.length) {
+    store.knowledge ??= [];
+    store.knowledge.unshift(...createdArtifacts.knowledge);
+    store.knowledge = store.knowledge.slice(0, 80);
+    store.systemAgentOutputs ??= {};
+    store.systemAgentOutputs.internal ??= [];
+    store.systemAgentOutputs.internal.unshift(...createdArtifacts.knowledge.map(knowledgeToInsight));
+    store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
+    recordAudit(store, req.session.userId, 'knowledge.auto_created_from_chat', { agentId: id, knowledgeIds: createdArtifacts.knowledge.map((item) => item.id) });
   }
   recordAudit(store, req.session.userId, 'chat.recorded', { agentId: id, usage, llm });
   await writeStore(store);
-  res.json({ conversation: store.conversations[id], usage: store.usage[id], reply: agentReply, llm, createdTasks });
+  res.json({
+    conversation: store.conversations[id],
+    usage: store.usage[id],
+    reply: agentReply,
+    llm,
+    createdTasks: createdArtifacts.tasks,
+    createdArtifacts,
+    quotes: store.quotes ?? [],
+    customers: store.customers ?? [],
+    generatedOpportunities: store.generatedOpportunities ?? [],
+    systemAgentOutputs: store.systemAgentOutputs ?? {}
+  });
 });
 
 app.post('/api/agents/:id/conversation/clear', requireAuth, async (req, res) => {
@@ -1002,6 +1044,9 @@ function fallbackAgentReply({ agent, user, message }) {
   if (/系统|企业OS|服务|同事|怎么做|如何做/.test(message)) {
     return '要让企业OS更好服务同事，关键是让每次对话直接产出行动：客户跟进、报价草稿、技术排查、会议分工、商机判断。内部知识沉淀应在后台自动发生，不要干扰同事完成眼前工作。';
   }
+  if (/报价|询价|预算|航天|阀门|设备/.test(message)) {
+    return '我先按报价工作流处理：确认客户场景、关键设备/材料参数、报价边界、交付周期和审批要求；系统会同步形成报价草案、客户跟进任务和需要补齐的参数清单。';
+  }
   if (/悬浮|真空|熔炼|新型金属|金属材料|材料|市场/.test(message)) {
     return '建议先锁定高校/研究院材料实验室、航空航天材料团队、金属粉末与增材制造企业、特种合金小试线。先卖“材料试制/工艺验证”，再推进设备方案，这比直接卖设备更容易打开客户。';
   }
@@ -1255,6 +1300,41 @@ async function fetchTenderSignals() {
 }
 
 async function fetchQianlimaTenders(keyword) {
+  try {
+    const postResponse = await fetch(tenderSources[1].baseUrl, {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 EnterpriseOS Tender Agent',
+        Accept: 'text/html,application/xhtml+xml',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: tenderSources[1].baseUrl
+      },
+      body: new URLSearchParams({
+        pageNo: '1',
+        pageSize: '15',
+        pageList: '15',
+        searchword: keyword,
+        searchword2: keyword,
+        kw: keyword,
+        kwname: keyword,
+        infoType: '1',
+        noticeTypes: '0',
+        timeType: '2',
+        searchType: '2',
+        firstTime: '1',
+        flag: '0',
+        source: 'baidu'
+      })
+    });
+    if (postResponse.ok) {
+      const html = await postResponse.text();
+      const rows = parseQianlimaTenderRows(html, keyword, `${tenderSources[1].baseUrl}?keywords=${encodeURIComponent(keyword)}`);
+      if (rows.length) return rows;
+    }
+  } catch {
+    // Fall back to public GET URL shapes.
+  }
+
   const urls = [
     `${tenderSources[1].baseUrl}?keywords=${encodeURIComponent(keyword)}`,
     `${tenderSources[1].baseUrl}?key=${encodeURIComponent(keyword)}`
@@ -1279,6 +1359,8 @@ async function fetchQianlimaTenders(keyword) {
 }
 
 function parseQianlimaTenderRows(html, keyword, sourceUrl) {
+  const tableRows = parseQianlimaTenderTableRows(html, keyword, sourceUrl);
+  if (tableRows.length) return tableRows;
   const text = decodeHtml(html).replace(/\r/g, '\n');
   const rowPattern = /(20\d{2}-\d{2}-\d{2})\s+([^\s]{2,12})\s+(招标|中标|拟在建项目)\s+([^\n<]{6,160})/g;
   const rows = [];
@@ -1287,6 +1369,31 @@ function parseQianlimaTenderRows(html, keyword, sourceUrl) {
     const [, date, region, type, rawTitle] = match;
     const title = rawTitle.replace(/\s+/g, ' ').trim();
     if (!title || !isRelevantTender(title, keyword)) continue;
+    rows.push(tenderToOpportunity({
+      title,
+      date,
+      region,
+      type,
+      keyword,
+      source: '全国招标采购信息平台',
+      url: sourceUrl
+    }));
+  }
+  return rows;
+}
+
+function parseQianlimaTenderTableRows(html, keyword, sourceUrl) {
+  const rows = [];
+  const trPattern = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let match;
+  while ((match = trPattern.exec(html))) {
+    const cells = [...match[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((cell) =>
+      decodeHtml(cell[1]).replace(/\s+/g, ' ').trim()
+    );
+    if (cells.length < 4) continue;
+    const [date, region, type, ...titleParts] = cells;
+    const title = titleParts.join(' ').replace(/\s+/g, ' ').trim();
+    if (!/^20\d{2}-\d{2}-\d{2}$/.test(date) || !title || !isRelevantTender(title, keyword)) continue;
     rows.push(tenderToOpportunity({
       title,
       date,
@@ -1449,17 +1556,18 @@ function normalizeTaskInput(input, actorId) {
   };
 }
 
-function deriveTasksFromMessage({ actorId, ownerId, message, reply, attachments = [] }) {
+function deriveWorkflowArtifactsFromMessage({ actorId, ownerId, message, reply, attachments = [], agent, user }) {
   const text = `${message}\n${reply}`;
   const hasAttachment = attachments.length > 0;
-  const actionable = /会议|纪要|访谈|客户|报价|商机|跟进|确认|整理|准备|参数|方案|预算|采购/.test(text);
-  if (!actionable && !hasAttachment) return [];
+  const artifacts = { tasks: [], quotes: [], customers: [], opportunities: [], knowledge: [] };
+  const actionable = /会议|纪要|访谈|客户|报价|商机|跟进|确认|整理|准备|参数|方案|预算|采购|招标|熔炼|材料|设备|风险|供应/.test(text);
+  if (!actionable && !hasAttachment) return artifacts;
   const firstAttachment = attachments[0];
   const source = hasAttachment ? `附件：${firstAttachment.name}` : '个人助理对话';
   const title = hasAttachment
     ? `处理并拆解 ${firstAttachment.name}`
     : inferTaskTitle(text);
-  return [
+  artifacts.tasks.push(
     normalizeTaskInput(
       {
         title,
@@ -1474,7 +1582,80 @@ function deriveTasksFromMessage({ actorId, ownerId, message, reply, attachments 
       },
       actorId
     )
-  ];
+  );
+
+  const customerName = inferCustomerName(text);
+  if (/客户|访谈|会议|纪要|联系人|采购|预算|招标|研究院|实验室|航天|半导体/.test(text) || customerName) {
+    artifacts.customers.push(
+      normalizeCustomerInsight(
+        {
+          name: customerName || `${user?.name ?? ownerId} 待确认客户`,
+          type: inferCustomerType(text),
+          stage: /报价/.test(text) ? '报价阶段' : /成交|复购|维护/.test(text) ? '维护' : /商务|谈判/.test(text) ? '商务谈判' : '线索',
+          owner: ownerId,
+          contact: inferContact(text),
+          phone: inferPhone(text),
+          last: '今天',
+          next: inferCustomerNext(text),
+          priority: /紧急|今天|报价|预算|采购|招标|航天/.test(text) ? 'high' : 'medium'
+        },
+        actorId
+      )
+    );
+  }
+
+  if (/报价|价格|预算|询价|设备|熔炼服务|材料试制|工艺验证|交付|参数/.test(text)) {
+    const quote = createQuoteDraftFromText({ text, ownerId, actorId, customerName });
+    artifacts.quotes.push(quote);
+    artifacts.tasks.push(
+      normalizeTaskInput(
+        {
+          title: `补齐报价参数：${quote.customer}`,
+          owner: WORKFLOW_OWNER_ID,
+          collaborators: ownerId === WORKFLOW_OWNER_ID ? [] : [ownerId],
+          priority: /紧急|今天|航天|招标/.test(text) ? 'high' : 'medium',
+          due: /今天|紧急/.test(text) ? '今天' : '本周',
+          tag: '报价准备',
+          source,
+          next: [quote.next, quote.missing.length ? `缺失参数：${quote.missing.join('、')}` : ''].filter(Boolean).join('\n'),
+          relatedQuoteId: quote.id
+        },
+        actorId
+      )
+    );
+  }
+
+  if (/商机|机会|招标|采购|客户线索|市场|航天|研究院|实验室|新材料|熔炼炉/.test(text)) {
+    const opportunity = createOpportunityFromText({ text, ownerId, actorId, customerName, source });
+    artifacts.opportunities.push(opportunity);
+    artifacts.tasks.push(
+      normalizeTaskInput(
+        {
+          title: `验证商机：${opportunity.title}`,
+          owner: ownerId,
+          collaborators: ownerId === WORKFLOW_OWNER_ID ? [] : [WORKFLOW_OWNER_ID],
+          priority: /紧急|今天|招标|航天/.test(text) ? 'high' : 'medium',
+          due: /今天|紧急/.test(text) ? '今天' : '48 小时内',
+          tag: '商机验证',
+          source,
+          next: opportunity.action,
+          relatedOpportunityId: opportunity.id
+        },
+        actorId
+      )
+    );
+  }
+
+  if (/经验|参数|工艺|材料|设备|风险|供应|报价|客户顾虑|纪要|访谈|附件正文/.test(text) || hasAttachment) {
+    artifacts.knowledge.push(createKnowledgeFromText({ text, ownerId, actorId, source, agent }));
+  }
+
+  artifacts.tasks = dedupeByTitleAndOwner(artifacts.tasks).slice(0, 5);
+  artifacts.customers = dedupeByName(artifacts.customers).slice(0, 3);
+  artifacts.quotes = artifacts.quotes.slice(0, 2);
+  artifacts.opportunities = dedupeTenderSignals(artifacts.opportunities).slice(0, 3);
+  artifacts.knowledge = artifacts.knowledge.slice(0, 2);
+  return artifacts;
 }
 
 function inferTaskTitle(text = '') {
@@ -1485,6 +1666,172 @@ function inferTaskTitle(text = '') {
   if (/材料/.test(clean)) return '整理材料需求和供应风险';
   if (/设备|参数/.test(clean)) return '确认设备参数和交付风险';
   return truncateText(clean, 48) || '根据对话生成下一步任务';
+}
+
+function inferCustomerName(text = '') {
+  const clean = String(text).replace(/\s+/g, ' ');
+  const patterns = [
+    /([\u4e00-\u9fa5A-Za-z0-9（）()]{2,40}(?:研究院|实验室|大学|学院|航天[^，。；\s]{0,12}|半导体[^，。；\s]{0,12}|材料[^，。；\s]{0,12}公司|科技[^，。；\s]{0,12}公司|有限公司))/,
+    /客户[：: ]+([\u4e00-\u9fa5A-Za-z0-9（）()]{2,40})/,
+    /采购单位[：: ]+([\u4e00-\u9fa5A-Za-z0-9（）()]{2,50})/
+  ];
+  for (const pattern of patterns) {
+    const match = clean.match(pattern);
+    if (match?.[1]) return truncateText(cleanCustomerName(match[1]), 60);
+  }
+  return '';
+}
+
+function cleanCustomerName(name = '') {
+  return String(name)
+    .replace(/^(今天|昨天|上午|下午|刚才)?\s*(和|跟|与)/, '')
+    .replace(/(沟通|交流|开会|访谈|说|提到).*$/, '')
+    .replace(/[赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄][\u4e00-\u9fa5]{0,2}(?:主任|教授|老师|经理|博士|总|工).*$/, '')
+    .replace(/[，。；;:：]$/, '')
+    .trim();
+}
+
+function inferCustomerType(text = '') {
+  if (/航天|军工|航空/.test(text)) return '航天军工';
+  if (/大学|学院|高校|实验室/.test(text)) return '高校科研';
+  if (/研究院|研究所|科研/.test(text)) return '科研机构';
+  if (/半导体|靶材|芯片/.test(text)) return '半导体';
+  return '企业客户';
+}
+
+function inferContact(text = '') {
+  return String(text).match(/([赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄][\u4e00-\u9fa5]{0,2}(?:主任|教授|老师|经理|总|工|博士))/)?.[1] || '待确认';
+}
+
+function inferPhone(text = '') {
+  return String(text).match(/1[3-9]\d[\d*]{4,8}\d{2,4}/)?.[0] || '待确认';
+}
+
+function inferCustomerNext(text = '') {
+  if (/报价|询价/.test(text)) return '补齐报价参数、预算范围、交付周期和审批要求。';
+  if (/招标|采购/.test(text)) return '核实采购公告、报名条件、技术参数和联系人。';
+  if (/材料|试制|工艺/.test(text)) return '确认材料体系、试制批次、检测要求和能否用服务切入。';
+  return '确认客户背景、真实需求、决策链和下一步跟进时间。';
+}
+
+function inferQuoteType(text = '') {
+  if (/熔炼服务|代熔|加工服务/.test(text)) return '熔炼服务';
+  if (/设备|熔炼炉|真空炉|冷坩埚|悬浮/.test(text)) return '设备报价';
+  if (/材料试制|小试|样品|试制/.test(text)) return '材料试制';
+  if (/工艺验证|验证/.test(text)) return '工艺验证';
+  return '打包方案';
+}
+
+function createQuoteDraftFromText({ text, ownerId, actorId, customerName }) {
+  const quoteType = inferQuoteType(text);
+  const missing = [
+    /材料|合金|靶材/.test(text) ? '' : '材料体系',
+    /重量|kg|公斤|批次|炉/.test(text) ? '' : '单炉重量/批次',
+    /温度|℃|真空|Pa/.test(text) ? '' : '温度与真空度',
+    /检测|成分|报告/.test(text) ? '' : '检测要求',
+    /交付|周期|日期/.test(text) ? '' : '交付周期',
+    /预算|价格|报价/.test(text) ? '' : '预算范围'
+  ].filter(Boolean);
+  const risk = [
+    '参数不足会导致报价偏差',
+    /航天|军工|高温|难熔/.test(text) ? '高要求客户需要明确验收标准和质量责任' : '',
+    /招标|采购/.test(text) ? '招标项目需要核实报名截止时间和资质要求' : ''
+  ].filter(Boolean);
+  return {
+    id: `quote-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    at: new Date().toISOString(),
+    owner: WORKFLOW_OWNER_ID,
+    collaborators: ownerId === WORKFLOW_OWNER_ID ? [] : [ownerId],
+    customer: customerName || '待确认客户',
+    type: quoteType,
+    summary: truncateText(`基于 ${quoteType} 需求形成内部报价草案：${String(text).replace(/\s+/g, ' ')}`, 360),
+    missing,
+    risk,
+    next: '先补齐关键参数，再由报价 Agent 生成内部草案；正式对外报价前需要负责人审核。',
+    approval: /金额|正式|航天|军工|招标/.test(text) ? '需要 Jamie 审批' : 'Larry 可继续补充',
+    createdBy: actorId
+  };
+}
+
+function createOpportunityFromText({ text, ownerId, actorId, customerName, source }) {
+  const titleBase = customerName || inferTaskTitle(text);
+  return {
+    id: `opportunity-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    title: truncateText(titleBase.includes('商机') ? titleBase : `${titleBase} 商机线索`, 120),
+    source,
+    match: /悬浮|真空|熔炼|冷坩埚|高熵|靶材|难熔/.test(text) ? '材料/设备能力匹配 88%' : '客户需求与内部能力匹配 76%',
+    why: truncateText(`这条信息包含可验证的客户/采购/技术需求信号：${String(text).replace(/\s+/g, ' ')}`, 260),
+    action: /招标|采购/.test(text)
+      ? '核实招标来源、报名条件、技术参数和截止时间，再决定是否转报价。'
+      : '让负责同事确认客户背景、预算、技术参数和下一步沟通窗口。',
+    urgency: /今天|紧急|招标|采购|航天/.test(text) ? '24 小时内验证。' : '本周内完成初步验证。',
+    owner: ownerId,
+    createdBy: actorId,
+    date: new Date().toISOString().slice(0, 10)
+  };
+}
+
+function createKnowledgeFromText({ text, ownerId, actorId, source, agent }) {
+  const type = /报价/.test(text) ? '报价经验' : /客户|商机/.test(text) ? '客户经验' : /材料|合金|靶材/.test(text) ? '材料专家' : /设备|参数|熔炼/.test(text) ? '设备专家' : '工作经验';
+  return {
+    id: `knowledge-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    type,
+    title: `${type}沉淀：${inferTaskTitle(text)}`,
+    text: truncateText(String(text).replace(/\s+/g, ' '), 500),
+    source,
+    owner: ownerId,
+    agent: agent?.name || `${ownerId}_AI`,
+    createdAt: new Date().toISOString(),
+    createdBy: actorId
+  };
+}
+
+function knowledgeToInsight(item) {
+  return {
+    id: item.id,
+    at: item.createdAt,
+    title: item.title,
+    text: item.text,
+    source: `${item.agent} / ${item.source}`,
+    asset: `${item.type}.md`,
+    learning: `系统已把 ${getOwnerLabel(item.owner)} 的信息抽象成 ${item.type}，供内部信息 Agent 后续沉淀，不暴露私密原文。`
+  };
+}
+
+function getOwnerLabel(ownerId) {
+  return defaultUsers.find((user) => user.id === ownerId)?.name || ownerId;
+}
+
+function upsertCustomers(store, customers) {
+  for (const customer of customers) {
+    const existing = store.customers.find((item) => item.name === customer.name);
+    if (existing) {
+      Object.assign(existing, customer, { id: existing.id, updatedAt: new Date().toISOString() });
+    } else {
+      store.customers.unshift(customer);
+    }
+  }
+  store.customers = store.customers.slice(0, 80);
+}
+
+function dedupeByTitleAndOwner(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.title}-${item.owner}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeByName(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = item.name;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function persistSystemAgentArtifacts(store, id, output, actorId) {

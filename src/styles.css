@@ -389,7 +389,8 @@ h2 {
 }
 
 .saved-dock,
-.broadcast-inbox {
+.broadcast-inbox,
+.workflow-artifacts-dock {
   padding: 10px;
   border: 1px solid #dde4ec;
   border-radius: 8px;
@@ -397,7 +398,8 @@ h2 {
 }
 
 .saved-dock strong,
-.broadcast-inbox > strong {
+.broadcast-inbox > strong,
+.workflow-artifacts-dock > strong {
   display: block;
   margin-bottom: 8px;
 }
@@ -438,6 +440,54 @@ h2 {
   color: #344054;
   background: #eef2f6;
   font-weight: 850;
+}
+
+.workflow-artifacts-dock {
+  display: grid;
+  gap: 10px;
+  border-color: #b7e4cf;
+  background: #f4fff8;
+}
+
+.workflow-artifacts-dock p {
+  margin: 0;
+  color: #4b5f58;
+  font-size: 13px;
+}
+
+.workflow-artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-artifact-grid button {
+  display: grid;
+  gap: 4px;
+  min-height: 78px;
+  padding: 10px;
+  border: 1px solid #cdebdc;
+  border-radius: 8px;
+  text-align: left;
+  background: #ffffff;
+}
+
+.workflow-artifact-grid span {
+  color: #155e52;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.workflow-artifact-grid b {
+  color: #172033;
+  font-size: 22px;
+}
+
+.workflow-artifact-grid small {
+  overflow: hidden;
+  color: #667085;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .broadcast-item {
