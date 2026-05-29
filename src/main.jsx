@@ -1398,7 +1398,25 @@ function CoworkerWorkspace({
   taskNotice
 }) {
   const uploadInputId = `upload-${selectedId}`;
+  const messageStreamRef = useRef(null);
+  const stickToBottomRef = useRef(true);
   const [discussionDraft, setDiscussionDraft] = useState({ broadcastId: '', discussWith: [], note: '' });
+
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      const stream = messageStreamRef.current;
+      if (stream) stream.scrollTop = stream.scrollHeight;
+    });
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) return;
+    window.requestAnimationFrame(() => {
+      const stream = messageStreamRef.current;
+      if (stream) stream.scrollTop = stream.scrollHeight;
+    });
+  }, [messages.length, selectedId]);
 
   const toggleDiscussWith = (teammateId) => {
     setDiscussionDraft((current) => ({
@@ -1458,7 +1476,14 @@ function CoworkerWorkspace({
             <button onClick={clearConversation} disabled={isThinking}>清空对话</button>
           </div>
         </div>
-        <div className="message-stream">
+        <div
+          className="message-stream"
+          ref={messageStreamRef}
+          onScroll={(event) => {
+            const stream = event.currentTarget;
+            stickToBottomRef.current = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 90;
+          }}
+        >
           {messages.length ? (
             messages.map((message, index) => (
               <div className={`message ${message.from} ${message.thinking ? 'thinking' : ''}`} key={message.id ?? `${message.from}-${index}`}>
