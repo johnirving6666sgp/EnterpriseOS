@@ -1,0 +1,38 @@
+{
+  "keywords": [
+    "熔炼",
+    "熔炼炉",
+    "真空熔炼",
+    "悬浮熔炼",
+    "悬浮真空感应熔炼",
+    "冷坩埚",
+    "高温难熔金属",
+    "高熵合金",
+    "靶材",
+    "金属材料",
+    "新材料",
+    "材料试制",
+    "特种合金",
+    "真空炉",
+    "电弧熔炼",
+    "感应熔炼"
+  ],
+  "sources": [
+    {
+      "id": "qianlima",
+      "name": "全国招标采购信息平台",
+      "adapter": "qianlima",
+      "baseUrl": "https://zb.yfb.qianlima.com/yfbsemsite/mesinfo/zbpglist",
+      "enabled": true,
+      "manualFallback": false
+    },
+    {
+      "id": "ctbpsp",
+      "name": "中国招标投标公共服务平台",
+      "adapter": "ctbpsp",
+      "baseUrl": "https://ctbpsp.com/#/bulletinList",
+      "enabled": true,
+      "manualFallback": true
+    }
+  ]
+}

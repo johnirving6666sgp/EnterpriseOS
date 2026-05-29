@@ -103,6 +103,8 @@ npm run crawl:tenders
 
 默认关键词覆盖熔炼、金属材料、新材料、悬浮熔炼、冷坩埚、高温难熔金属、高熵合金、靶材等方向。输出文件会写入 `data/tender-opportunities/`，同时生成 JSON 和 Markdown。中国招标投标公共服务平台如果需要浏览器渲染，脚本会生成精确关键词核验入口，不会把未验证内容当作真实招标。
 
+招标来源配置在 `config/tender-sources.json`。以后增加类似网站时，优先新增一条 source 配置；如果页面结构不同，再在 `server/tender-scanner.mjs` 中增加一个 adapter。扫描器会记录 `seenIds` 和最近扫描日志，用于识别新发现、去重和排查失败来源。
+
 ## Auth
 
 - 登录 token 默认 7 天过期，可用 `SESSION_TTL_MS` 调整。
