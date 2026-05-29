@@ -93,6 +93,16 @@ OPENROUTER_APP_NAME=EnterpriseOS
 
 设置后，个人 Agent 对话会由后端调用 OpenRouter 生成真实回复；没有配置 key 时会自动使用本地降级回复。
 
+## 招标商机抓取
+
+外部机会 Agent 可先用独立脚本抓取国内招标线索，再整理成商机池：
+
+```bash
+npm run crawl:tenders
+```
+
+默认关键词覆盖熔炼、金属材料、新材料、悬浮熔炼、冷坩埚、高温难熔金属、高熵合金、靶材等方向。输出文件会写入 `data/tender-opportunities/`，同时生成 JSON 和 Markdown。中国招标投标公共服务平台如果需要浏览器渲染，脚本会生成精确关键词核验入口，不会把未验证内容当作真实招标。
+
 ## Auth
 
 - 登录 token 默认 7 天过期，可用 `SESSION_TTL_MS` 调整。
