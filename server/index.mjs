@@ -22,6 +22,24 @@ const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconn
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
+const tenderKeywords = (process.env.TENDER_KEYWORDS || '熔炼炉,真空熔炼,悬浮熔炼,真空炉,电弧熔炼,感应熔炼,新材料,金属材料,材料试制,特种合金')
+  .split(',')
+  .map((keyword) => keyword.trim())
+  .filter(Boolean);
+const tenderSources = [
+  {
+    id: 'ctbpsp',
+    name: '中国招标投标公共服务平台',
+    baseUrl: 'https://ctbpsp.com/#/bulletinList',
+    searchable: false
+  },
+  {
+    id: 'qianlima',
+    name: '全国招标采购信息平台',
+    baseUrl: 'https://zb.yfb.qianlima.com/yfbsemsite/mesinfo/zbpglist',
+    searchable: true
+  }
+];
 const allowedOrigins = (process.env.APP_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,https://timeconnector.net,https://www.timeconnector.net')
   .split(',')
   .map((origin) => origin.trim())
@@ -992,6 +1010,7 @@ function fallbackAgentReply({ agent, user, message }) {
 
 async function runSystemAgent({ id, store, systemAgent }) {
   const model = toOpenRouterModel(systemAgent.apiModel);
+  const tenderSignals = id === 'external' ? await fetchTenderSignals() : [];
   const compactConversations = Object.entries(store.conversations ?? {})
     .map(([ownerId, conversation]) => {
       const latest = conversation
@@ -1022,7 +1041,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
 
   if (!OPENROUTER_API_KEY) {
     return {
-      output: fallbackSystemAgentOutput(id),
+      output: fallbackSystemAgentOutput(id, '', tenderSignals),
       llm: { provider: 'fallback', simulated: true, reason: 'missing_openrouter_key' }
     };
   }
@@ -1040,7 +1059,8 @@ async function runSystemAgent({ id, store, systemAgent }) {
             `这是当前小团队最近对话摘要：\n\n${compactConversations || '暂无对话。'}`,
             `\n\n这是各同事收藏过的商机 ID：\n${savedSignals || '暂无收藏。'}`,
             `\n\n这是近期广播、已读和反馈：\n${broadcastSignals || '暂无广播。'}`,
-            `\n\n这是系统 Agent 过去沉淀的学习记忆：\n${previousSystemLearning || '暂无系统学习。'}`
+            `\n\n这是系统 Agent 过去沉淀的学习记忆：\n${previousSystemLearning || '暂无系统学习。'}`,
+            id === 'external' ? `\n\n这是刚从国内招标网站抓取的候选招标线索：\n${formatTenderSignals(tenderSignals) || '暂未抓到可解析招标条目。'}` : ''
           ].join('\n')
         }
       ],
@@ -1049,12 +1069,12 @@ async function runSystemAgent({ id, store, systemAgent }) {
     });
     const data = parseJsonObject(result.reply);
     return {
-      output: normalizeSystemAgentOutput(id, data, result.reply),
+      output: normalizeSystemAgentOutput(id, data, result.reply, tenderSignals),
       llm: { provider: 'openrouter', model: result.model, simulated: false }
     };
   } catch (error) {
     return {
-      output: fallbackSystemAgentOutput(id, error.message),
+      output: fallbackSystemAgentOutput(id, error.message, tenderSignals),
       llm: { provider: 'fallback', model, simulated: true, error: error.message }
     };
   }
@@ -1110,16 +1130,16 @@ function getSystemAgentSpec(id) {
     ].join('\n');
   }
   return [
-    '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
-    '不要假装已经实时联网；如果没有实时新闻，就用“待验证线索”口径，并说明验证路径。',
+      '你是外部机会 Agent，目标是把外部信息和内部专家能力相互匹配，找到可能很大的商机线索。',
+    '优先使用用户指定的国内招标网站抓取结果；如果某站点需要 JavaScript 或登录导致无法解析，要明确标为“需人工打开验证”。',
     '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
     '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',
-    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","learning":"...","broadcast":{"title":"...","content":"..."}}。',
+    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","url":"...","date":"...","learning":"...","broadcast":{"title":"...","content":"..."}}。',
     'title 要像商机卡片标题，why 要讲清楚为什么可能是大机会，action 要说明同事下一步怎么验证和补充信息。'
   ].join('\n');
 }
 
-function normalizeSystemAgentOutput(id, data, raw) {
+function normalizeSystemAgentOutput(id, data, raw, tenderSignals = []) {
   if (id === 'task') {
     return {
       id: `task-${Date.now()}`,
@@ -1169,14 +1189,17 @@ function normalizeSystemAgentOutput(id, data, raw) {
     };
   }
   if (id === 'external') {
+    const tender = pickTenderSignal(data, tenderSignals);
     const opportunity = {
       id: `external-${Date.now()}`,
-      title: data.title || '待验证：新型金属材料研发客户线索',
-      source: data.source || '外部机会 Agent / OpenRouter',
-      match: data.match || '材料与设备能力匹配 78%',
-      why: data.why || raw.slice(0, 240),
-      action: data.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。',
-      urgency: data.urgency || '需要 48 小时内验证线索真实性和联系人。'
+      title: data.title || tender?.title || '待验证：新型金属材料研发客户线索',
+      source: data.source || tender?.source || '外部机会 Agent / 招标网站抓取',
+      match: data.match || tender?.match || '材料与设备能力匹配 78%',
+      why: data.why || tender?.why || raw.slice(0, 240),
+      action: data.action || tender?.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。',
+      urgency: data.urgency || tender?.urgency || '需要 48 小时内验证线索真实性和联系人。',
+      url: data.url || tender?.url || '',
+      date: data.date || tender?.date || ''
     };
     return {
       id: opportunity.id,
@@ -1219,6 +1242,135 @@ function normalizeSystemBroadcast(broadcast, source) {
     broadcast?.content ||
     [source?.why, source?.action, source?.urgency ? `紧急度：${source.urgency}` : ''].filter(Boolean).join('\n');
   return { type: broadcast?.type || source?.type || '商机线索', title, content };
+}
+
+async function fetchTenderSignals() {
+  const signals = [];
+  for (const keyword of tenderKeywords.slice(0, 8)) {
+    const qianlimaSignals = await fetchQianlimaTenders(keyword);
+    signals.push(...qianlimaSignals);
+  }
+  signals.push(...buildCtbpspManualSignals());
+  return dedupeTenderSignals(signals).slice(0, 18);
+}
+
+async function fetchQianlimaTenders(keyword) {
+  const urls = [
+    `${tenderSources[1].baseUrl}?keywords=${encodeURIComponent(keyword)}`,
+    `${tenderSources[1].baseUrl}?key=${encodeURIComponent(keyword)}`
+  ];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 EnterpriseOS Tender Agent',
+          Accept: 'text/html,application/xhtml+xml'
+        }
+      });
+      if (!response.ok) continue;
+      const html = await response.text();
+      const rows = parseQianlimaTenderRows(html, keyword, url);
+      if (rows.length) return rows;
+    } catch {
+      // Try the next URL shape; some public tender pages are dynamic or rate limited.
+    }
+  }
+  return [];
+}
+
+function parseQianlimaTenderRows(html, keyword, sourceUrl) {
+  const text = decodeHtml(html).replace(/\r/g, '\n');
+  const rowPattern = /(20\d{2}-\d{2}-\d{2})\s+([^\s]{2,12})\s+(招标|中标|拟在建项目)\s+([^\n<]{6,160})/g;
+  const rows = [];
+  let match;
+  while ((match = rowPattern.exec(text))) {
+    const [, date, region, type, rawTitle] = match;
+    const title = rawTitle.replace(/\s+/g, ' ').trim();
+    if (!title || !isRelevantTender(title, keyword)) continue;
+    rows.push(tenderToOpportunity({
+      title,
+      date,
+      region,
+      type,
+      keyword,
+      source: '全国招标采购信息平台',
+      url: sourceUrl
+    }));
+  }
+  return rows;
+}
+
+function buildCtbpspManualSignals() {
+  return tenderKeywords.slice(0, 5).map((keyword) =>
+    tenderToOpportunity({
+      title: `打开中国招标投标公共服务平台验证：${keyword} 最新公告`,
+      date: new Date().toISOString().slice(0, 10),
+      region: '全国',
+      type: '招标搜索',
+      keyword,
+      source: '中国招标投标公共服务平台',
+      url: `${tenderSources[0].baseUrl}?keyWords=${encodeURIComponent(keyword)}`,
+      manual: true
+    })
+  );
+}
+
+function isRelevantTender(title, keyword) {
+  return /熔炼|真空炉|悬浮|电弧炉|感应炉|合金|金属材料|新材料|材料试制|高温炉|实验炉|熔炉|熔炼炉|阀门/.test(title);
+}
+
+function tenderToOpportunity({ title, date, region, type, keyword, source, url, manual = false }) {
+  return {
+    id: `tender-${source}-${keyword}-${title}`.replace(/[^\w\u4e00-\u9fa5-]+/g, '-').slice(0, 120),
+    title,
+    source: `${source} / ${type} / ${region}`,
+    match: manual ? '需人工打开验证' : '招标关键词匹配 86%',
+    why: manual
+      ? `${source} 页面需要浏览器 JavaScript 渲染，系统已生成关键词入口，需要人工打开确认最新公告。`
+      : `标题命中“${keyword}”，可能与熔炼设备、新材料研发、材料试制或设备选型相关。`,
+    action: manual
+      ? `打开链接检索“${keyword}”，确认是否有熔炼炉、真空熔炼、新材料相关采购公告。`
+      : '收藏后分配给相关同事核实采购单位、技术参数、报名截止时间和是否需要报价。',
+    urgency: manual ? '今天人工验证一次。' : '24 小时内核实公告详情和联系人。',
+    url,
+    date
+  };
+}
+
+function dedupeTenderSignals(signals) {
+  const seen = new Set();
+  return signals.filter((signal) => {
+    const key = `${signal.title}-${signal.source}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function formatTenderSignals(signals = []) {
+  return signals
+    .slice(0, 12)
+    .map((item) => `- ${item.date || ''} ${item.title} / ${item.source} / ${item.url || ''} / ${item.why}`)
+    .join('\n');
+}
+
+function pickTenderSignal(data, tenderSignals = []) {
+  if (!tenderSignals.length) return null;
+  const dataTitle = String(data.title || '');
+  return tenderSignals.find((item) => dataTitle && item.title.includes(dataTitle.slice(0, 10))) ?? tenderSignals[0];
+}
+
+function decodeHtml(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, '\n')
+    .replace(/<style[\s\S]*?<\/style>/gi, '\n')
+    .replace(/<[^>]+>/g, '\n')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/\n{2,}/g, '\n');
 }
 
 function fallbackWorkflowTasks() {
@@ -1446,7 +1598,7 @@ function fallbackCustomerInsights() {
   ];
 }
 
-function fallbackSystemAgentOutput(id, detail = '') {
+function fallbackSystemAgentOutput(id, detail = '', tenderSignals = []) {
   if (id === 'task') {
     return normalizeSystemAgentOutput(
       'task',
@@ -1497,22 +1649,28 @@ function fallbackSystemAgentOutput(id, detail = '') {
     );
   }
   if (id === 'external') {
+    const tender = tenderSignals[0];
     return normalizeSystemAgentOutput(
       'external',
       {
-        title: '待验证：材料试制切入悬浮真空熔炼设备客户',
-        source: '外部机会 Agent / 本地降级',
-        match: '材料专家与设备专家能力匹配 80%',
-        why: `可先围绕高校材料实验室、航空航天材料团队、特种合金小试线寻找材料试制需求。${detail}`,
-        action: '收藏后让个人助理生成客户清单、验证问题和首轮沟通话术。',
-        urgency: '48 小时内先验证 10 个潜在客户名单。',
-        learning: '外部机会 Agent 通过内部材料/设备能力，优先寻找材料试制切入设备销售的机会。',
+        title: tender?.title || '待验证：材料试制切入悬浮真空熔炼设备客户',
+        source: tender?.source || '外部机会 Agent / 本地降级',
+        match: tender?.match || '材料专家与设备专家能力匹配 80%',
+        why: tender?.why || `可先围绕高校材料实验室、航空航天材料团队、特种合金小试线寻找材料试制需求。${detail}`,
+        action: tender?.action || '收藏后让个人助理生成客户清单、验证问题和首轮沟通话术。',
+        urgency: tender?.urgency || '48 小时内先验证 10 个潜在客户名单。',
+        url: tender?.url || '',
+        date: tender?.date || '',
+        learning: tenderSignals.length
+          ? '外部机会 Agent 已接入国内招标网站抓取结果，并优先筛选熔炼炉、真空熔炼、新材料相关线索。'
+          : '外部机会 Agent 通过内部材料/设备能力，优先寻找材料试制切入设备销售的机会。',
         broadcast: {
-          title: '外部机会 Agent 发现：材料试制可切入悬浮真空熔炼设备客户',
-          content: '请大家补充高校材料实验室、航天材料团队、特种合金小试线等潜在客户线索；收藏后可让个人助理拆客户画像和验证问题。'
+          title: tender?.title ? `外部机会 Agent 发现招标线索：${tender.title}` : '外部机会 Agent 发现：材料试制可切入悬浮真空熔炼设备客户',
+          content: tender?.action || '请大家补充高校材料实验室、航天材料团队、特种合金小试线等潜在客户线索；收藏后可让个人助理拆客户画像和验证问题。'
         }
       },
-      detail
+      detail,
+      tenderSignals
     );
   }
   return normalizeSystemAgentOutput(

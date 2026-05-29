@@ -995,6 +995,13 @@ select {
   justify-self: start;
 }
 
+.tender-link {
+  color: #155e52;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .save-opportunity,
 .saved-opportunity {
   width: 100%;

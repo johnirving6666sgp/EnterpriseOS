@@ -1966,8 +1966,8 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
     <section className="opportunity-page">
       <div className="radar-hero">
         <p className="eyebrow">External Opportunity Board</p>
-        <h2>全网行业线索 ──► AI 匹配内部专家能力 ──► 收藏至我的助理</h2>
-        <span>商业绿色雷达 · 当前收藏目标：{workspaceName} 的助理</span>
+        <h2>国内招标网站实时线索 ──► AI 匹配内部专家能力 ──► 收藏至我的助理</h2>
+        <span>监控关键词：熔炼炉、真空熔炼、悬浮熔炼、新材料、金属材料 · 当前收藏目标：{workspaceName} 的助理</span>
         <button className="agent-run-button radar-run" onClick={runExternalAgent} disabled={running}>
           <Newspaper size={18} />
           {running ? '外部 Agent 搜索中...' : '运行外部机会 Agent'}
@@ -1983,6 +1983,12 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
               <p>{card.why}</p>
               {card.urgency && <p className="urgency-note">紧急度：{card.urgency}</p>}
               {card.action && <p className="action-note">{card.action}</p>}
+              {card.date && <p className="action-note">发布日期：{card.date}</p>}
+              {card.url && (
+                <a className="tender-link" href={card.url} target="_blank" rel="noreferrer">
+                  打开招标来源
+                </a>
+              )}
               <div className="match-pill">{card.match}</div>
               <button className={saved ? 'saved-opportunity' : 'save-opportunity'} onClick={() => saveOpportunity(card.id)}>
                 {saved ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}
