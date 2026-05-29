@@ -1276,6 +1276,15 @@ select {
   background: #ffffff;
 }
 
+.radar-actions {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.radar-actions .radar-run {
+  margin-top: 0;
+}
+
 .masonry-board {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1600,6 +1609,27 @@ select {
   border: 1px solid #dde4ec;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.page-return-button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-weight: 900;
+}
+
+.insight-page > .page-return-button {
+  margin-bottom: 12px;
 }
 
 .business-heading p,

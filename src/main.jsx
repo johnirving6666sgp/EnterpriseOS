@@ -1200,6 +1200,7 @@ function EnterpriseApp({ auth, onLogout }) {
           insightCards={allInsightCards}
           runSystemAgent={runSystemAgent}
           running={systemRunning.internal}
+          setPage={setPage}
         />
       )}
 
@@ -1209,6 +1210,7 @@ function EnterpriseApp({ auth, onLogout }) {
           createTask={createTask}
           runTaskAgent={() => runSystemAgent('task')}
           running={systemRunning.task}
+          setPage={setPage}
           tasks={tasks}
           taskOutputs={systemOutputs.task ?? []}
           updateTask={updateTask}
@@ -1241,7 +1243,7 @@ function EnterpriseApp({ auth, onLogout }) {
       )}
 
       {visiblePage === 'broadcast' && (
-        <BroadcastCenter broadcasts={broadcasts} createBroadcast={createBroadcast} totalUsage={totalUsage} />
+        <BroadcastCenter broadcasts={broadcasts} createBroadcast={createBroadcast} setPage={setPage} totalUsage={totalUsage} />
       )}
 
       {visiblePage === 'opportunity' && (
@@ -1252,6 +1254,7 @@ function EnterpriseApp({ auth, onLogout }) {
           workspaceName={access.ownerName}
           runExternalAgent={() => runSystemAgent('external')}
           running={systemRunning.external}
+          setPage={setPage}
         />
       )}
 
@@ -1859,7 +1862,15 @@ function authErrorText(code) {
   return messages[code] ?? code;
 }
 
-function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, messagesByUser, runSystemAgent, running, sendInsightBroadcast, totalUsage }) {
+function PageReturn({ setPage }) {
+  return (
+    <button className="page-return-button" onClick={() => setPage('dashboard')}>
+      返回业务工作台
+    </button>
+  );
+}
+
+function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, messagesByUser, runSystemAgent, running, sendInsightBroadcast, setPage, totalUsage }) {
   const eventCount = Object.values(messagesByUser).flat().length;
   const [draft, setDraft] = useState({
     type: '工作计划',
@@ -1877,6 +1888,7 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   };
   return (
     <section className="insight-page">
+      <PageReturn setPage={setPage} />
       <div className="funnel-row">
         <Metric label="助理 Agent" value={String(teammates.length)} />
         <Metric label="原始对话事件" value={eventCount} />
@@ -2006,7 +2018,7 @@ function InsightAgent({ broadcasted, broadcasts, createBroadcast, insightCards, 
   );
 }
 
-function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks, taskOutputs, updateTask }) {
+function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, setPage, tasks, taskOutputs, updateTask }) {
   const latestOutput = taskOutputs[0];
   const extractedTasks = latestOutput?.tasks ?? [];
   const groupedTasks = taskStatusColumnsWithClosed.map((column) => ({
@@ -2020,14 +2032,17 @@ function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks
           <h2>任务看板</h2>
           <p>把 Agent 对话、会议纪要、商机跟进沉淀为可执行任务。</p>
         </div>
-        <button
-          className="broadcast-button compact-button"
-          disabled={!canManageWorkflow}
-          onClick={() => createTask({ owner: 'larry', title: '新的客户跟进任务', source: '手动创建', next: '补充任务目标、负责人和截止时间。' })}
-        >
-          <ClipboardList size={17} />
-          新建任务
-        </button>
+        <div className="heading-actions">
+          <PageReturn setPage={setPage} />
+          <button
+            className="broadcast-button compact-button"
+            disabled={!canManageWorkflow}
+            onClick={() => createTask({ owner: 'larry', title: '新的客户跟进任务', source: '手动创建', next: '补充任务目标、负责人和截止时间。' })}
+          >
+            <ClipboardList size={17} />
+            新建任务
+          </button>
+        </div>
       </div>
       <WorkflowAgentPanel
         canManageWorkflow={canManageWorkflow}
@@ -2114,10 +2129,13 @@ function CustomerManager({ canManageWorkflow, customers, customerOutputs, opport
           <h2>客户管理</h2>
           <p>按客户增长漏斗管理：未接触 → 已接触 → 有意向 → 待报价 → 待成交 → 已成交。</p>
         </div>
-        <button className="broadcast-button compact-button" disabled={!canManageWorkflow} onClick={runCustomerAgent}>
-          <Users size={17} />
-          运行客户 Agent
-        </button>
+        <div className="heading-actions">
+          <PageReturn setPage={setPage} />
+          <button className="broadcast-button compact-button" disabled={!canManageWorkflow} onClick={runCustomerAgent}>
+            <Users size={17} />
+            运行客户 Agent
+          </button>
+        </div>
       </div>
       <WorkflowAgentPanel
         canManageWorkflow={canManageWorkflow}
@@ -2193,10 +2211,13 @@ function QuoteBuilder({ canManageWorkflow, quotes, quoteOutputs, running, runQuo
           <h2>报价方案</h2>
           <p>把客户需求、设备参数和历史报价组合成内部报价草案。</p>
         </div>
-        <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
-          <FileText size={17} />
-          保存报价
-        </button>
+        <div className="heading-actions">
+          <PageReturn setPage={setPage} />
+          <button className="broadcast-button compact-button" disabled={!canManageWorkflow}>
+            <FileText size={17} />
+            保存报价
+          </button>
+        </div>
       </div>
       <WorkflowAgentPanel
         canManageWorkflow={canManageWorkflow}
@@ -2321,7 +2342,7 @@ function WorkflowAgentPanel({
   );
 }
 
-function BroadcastCenter({ broadcasts, createBroadcast, totalUsage }) {
+function BroadcastCenter({ broadcasts, createBroadcast, setPage, totalUsage }) {
   const [draft, setDraft] = useState({
     type: '工作计划',
     title: '本周重点跟进',
@@ -2335,10 +2356,13 @@ function BroadcastCenter({ broadcasts, createBroadcast, totalUsage }) {
           <h2>广播中心</h2>
           <p>发布工作计划、商机线索和讨论邀请，并查看已读与反馈。</p>
         </div>
-        <button className="broadcast-button compact-button" onClick={() => createBroadcast(draft)}>
-          <Radio size={17} />
-          发布广播
-        </button>
+        <div className="heading-actions">
+          <PageReturn setPage={setPage} />
+          <button className="broadcast-button compact-button" onClick={() => createBroadcast(draft)}>
+            <Radio size={17} />
+            发布广播
+          </button>
+        </div>
       </div>
       <div className="broadcast-center-grid">
         <section className="quote-form-panel">
@@ -2403,17 +2427,20 @@ function BroadcastCenter({ broadcasts, createBroadcast, totalUsage }) {
   );
 }
 
-function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running }) {
+function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running, setPage }) {
   return (
     <section className="opportunity-page">
       <div className="radar-hero">
         <p className="eyebrow">External Opportunity Pool</p>
         <h2>外部线索池 ──► 真实需求 / 预算 / 时间 / 优势评分 ──► 转客户与任务</h2>
         <span>优先展示近 180 天线索；当前收藏目标：{workspaceName} 的助理</span>
-        <button className="agent-run-button radar-run" onClick={runExternalAgent} disabled={running}>
-          <Newspaper size={18} />
-          {running ? '外部 Agent 搜索中...' : '运行外部机会 Agent'}
-        </button>
+        <div className="heading-actions radar-actions">
+          <PageReturn setPage={setPage} />
+          <button className="agent-run-button radar-run" onClick={runExternalAgent} disabled={running}>
+            <Newspaper size={18} />
+            {running ? '外部 Agent 搜索中...' : '运行外部机会 Agent'}
+          </button>
+        </div>
       </div>
       <div className="masonry-board">
         {opportunities.map((card) => {
