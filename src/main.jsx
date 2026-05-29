@@ -173,7 +173,8 @@ const opportunitySeed = [
     source: '招投标 / 企业新闻',
     match: '设备专家能力匹配 92%',
     why: '需求涉及高压阀门、快速报价、可靠交付，和内部设备经验高度相关。',
-    action: '收藏后让个人助理生成设备报价方案。'
+    action: '收藏后让个人助理生成设备报价方案。',
+    quality: { demand: 5, budget: 4, timing: 5, advantage: 4, total: 92, recommendation: '优先跟进：先确认真实采购窗口和报价参数。' }
   },
   {
     id: 'nuclear-valve',
@@ -181,7 +182,8 @@ const opportunitySeed = [
     source: '行业论坛 / 技术文章',
     match: '阀门专家资产匹配 87%',
     why: 'Gu_AI 近期沉淀了大量阀门参数问答，可转化为系统级专家资产。',
-    action: '推送给设备专家学习，并广播给全员助理。'
+    action: '推送给设备专家学习，并广播给全员助理。',
+    quality: { demand: 3, budget: 2, timing: 3, advantage: 5, total: 72, recommendation: '观察跟进：先沉淀专家资产，再找对应客户。' }
   },
   {
     id: 'material-price',
@@ -189,7 +191,8 @@ const opportunitySeed = [
     source: '供应链新闻',
     match: '材料专家能力匹配 81%',
     why: '材料价格变化会影响报价策略和客户采购时机。',
-    action: '收藏后让材料相关同事判断替代方案。'
+    action: '收藏后让材料相关同事判断替代方案。',
+    quality: { demand: 3, budget: 3, timing: 4, advantage: 4, total: 76, recommendation: '转报价参考：用于调整材料试制和设备方案。' }
   }
 ];
 
@@ -255,11 +258,13 @@ const taskStatusColumns = [
   { id: 'done', title: '已完成' }
 ];
 
+const customerStageColumns = ['未接触', '已接触', '有意向', '待报价', '待成交', '已成交'];
+
 const customerSeed = [
-  { name: '华东有色金属研究院', type: '科研机构', stage: '洽谈中', contact: '张主任', phone: '138****8888', last: '5 天前' },
-  { name: '上海航天设备制造', type: '航天军工', stage: '报价阶段', contact: '李工', phone: '139****6666', last: '今天' },
-  { name: '广州高校材料实验室', type: '高校科研', stage: '商务谈判', contact: '王教授', phone: '137****5555', last: '2 天前' },
-  { name: '北京半导体材料公司', type: '半导体', stage: '成交', contact: '赵经理', phone: '136****4444', last: '1 周前' }
+  { name: '华东有色金属研究院', type: '科研机构', stage: '有意向', owner: 'luyang', contact: '张主任', phone: '138****8888', last: '5 天前', next: '确认设备升级预算和技术负责人。' },
+  { name: '上海航天设备制造', type: '航天军工', stage: '待报价', owner: 'larry', contact: '李工', phone: '139****6666', last: '今天', next: '补齐高压阀门参数和交付周期。' },
+  { name: '广州高校材料实验室', type: '高校科研', stage: '待成交', owner: 'guihua', contact: '王教授', phone: '137****5555', last: '2 天前', next: '确认样品试制方案和检测要求。' },
+  { name: '北京半导体材料公司', type: '半导体', stage: '已成交', owner: 'kingsong', contact: '赵经理', phone: '136****4444', last: '1 周前', next: '沉淀复购机会和交付复盘。' }
 ];
 
 function App() {
@@ -356,7 +361,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const messages = messagesByUser[workspaceId] ?? [];
   const isThinking = thinkingByUser[workspaceId] === true;
   const usage = usageByUser[workspaceId] ?? { calls: 0, input: 0, output: 0, cost: 0 };
-  const allOpportunities = [...generatedOpportunities, ...opportunitySeed];
+  const allOpportunities = [...generatedOpportunities, ...opportunitySeed].sort((a, b) => opportunityScore(b) - opportunityScore(a));
   const allInsightCards = [...(systemOutputs.internal ?? []), ...insightCards];
   const savedCards = allOpportunities.filter((item) => (savedByUser[workspaceId] ?? []).includes(item.id));
   const inboxBroadcasts = broadcasts.filter((item) => item.recipients.includes(workspaceId));
@@ -918,7 +923,7 @@ function EnterpriseApp({ auth, onLogout }) {
       <header className="app-top">
         <div>
           <p className="eyebrow">ClawOS Enterprise MVP</p>
-          <h1>从私密助理到组织记忆，再到外部商机雷达</h1>
+          <h1>从线索到客户，再到任务、报价和复盘</h1>
         </div>
         <nav className="top-nav" aria-label="页面导航">
           <button className={visiblePage === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
@@ -951,6 +956,7 @@ function EnterpriseApp({ auth, onLogout }) {
           <button onClick={onLogout}>退出登录</button>
         </nav>
       </header>
+      <BusinessFlowStrip />
 
       {visiblePage === 'workspace' && (
         <CoworkerWorkspace
@@ -1065,6 +1071,20 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
     </main>
+  );
+}
+
+function BusinessFlowStrip() {
+  const steps = ['线索', '客户', '任务', '报价', '订单/交付', '回款/复盘'];
+  return (
+    <section className="business-flow" aria-label="业务闭环">
+      {steps.map((step, index) => (
+        <React.Fragment key={step}>
+          <span>{step}</span>
+          {index < steps.length - 1 && <i>→</i>}
+        </React.Fragment>
+      ))}
+    </section>
   );
 }
 
@@ -1729,12 +1749,16 @@ function TaskBoard({ canManageWorkflow, createTask, runTaskAgent, running, tasks
 function CustomerManager({ canManageWorkflow, customers, customerOutputs, running, runCustomerAgent, setPage }) {
   const latestOutput = customerOutputs[0];
   const latestCustomers = latestOutput?.customers ?? [];
+  const groupedCustomers = customerStageColumns.map((stage) => ({
+    stage,
+    items: customers.filter((customer) => normalizeStageLabel(customer.stage) === stage)
+  }));
   return (
     <section className="business-page">
       <div className="business-heading">
         <div>
           <h2>客户管理</h2>
-          <p>把客户、联系人、阶段、上次跟进和下一步动作集中管理。</p>
+          <p>按客户增长漏斗管理：未接触 → 已接触 → 有意向 → 待报价 → 待成交 → 已成交。</p>
         </div>
         <button className="broadcast-button compact-button" disabled={!canManageWorkflow} onClick={runCustomerAgent}>
           <Users size={17} />
@@ -1771,25 +1795,33 @@ function CustomerManager({ canManageWorkflow, customers, customerOutputs, runnin
           </div>
         </section>
       )}
-      <div className="customer-grid">
-        {customers.map((customer) => (
-          <article className="customer-card" key={customer.name}>
-            <div className="customer-head">
-              <div className="customer-avatar">{customer.name[0]}</div>
-              <div>
-                <h3>{customer.name}</h3>
-                <span>{customer.type} · {getTeammateName(customer.owner)}</span>
-              </div>
+      <div className="customer-funnel">
+        {groupedCustomers.map((column) => (
+          <section className="customer-stage-column" key={column.stage}>
+            <div className="task-column-head">
+              <strong>{column.stage}</strong>
+              <span>{column.items.length}</span>
             </div>
-            <div className="stage-pill">{customer.stage}</div>
-            <p>联系人：{customer.contact} · {customer.phone}</p>
-            <p>上次联系：{customer.last}</p>
-            <p>下一步：{customer.next}</p>
-            <div className="customer-actions">
-              <button onClick={() => setPage('tasks')}>跟进</button>
-              <button onClick={() => setPage('quote')}>报价</button>
-            </div>
-          </article>
+            {column.items.map((customer) => (
+              <article className="customer-card" key={customer.name}>
+                <div className="customer-head">
+                  <div className="customer-avatar">{customer.name[0]}</div>
+                  <div>
+                    <h3>{customer.name}</h3>
+                    <span>{customer.type} · {getTeammateName(customer.owner)}</span>
+                  </div>
+                </div>
+                <div className="stage-pill">{normalizeStageLabel(customer.stage)}</div>
+                <p>联系人：{customer.contact} · {customer.phone}</p>
+                <p>上次联系：{customer.last}</p>
+                <p>下一步：{customer.next}</p>
+                <div className="customer-actions">
+                  <button onClick={() => setPage('tasks')}>跟进</button>
+                  <button onClick={() => setPage('quote')}>报价</button>
+                </div>
+              </article>
+            ))}
+          </section>
         ))}
       </div>
     </section>
@@ -1861,6 +1893,9 @@ function QuoteBuilder({ canManageWorkflow, quotes, quoteOutputs, running, runQuo
             <>
               <p>{quote.summary}</p>
               <p>报价类型：{quote.type} · 审批：{quote.approval}</p>
+              <p>建议区间：{quote.priceRange || '待补齐参数后生成内部区间'}</p>
+              <p>报价构成：{(quote.components ?? []).join('、') || '待补充'}</p>
+              <p>参考依据：{(quote.basis ?? []).join('；') || '需要匹配历史报价和市场价格。'}</p>
               <p>缺失参数：{(quote.missing ?? []).join('、') || '暂无'}</p>
               <p>风险：{(quote.risk ?? []).join('、') || '暂无'}</p>
               <p>下一步：{quote.next}</p>
@@ -2013,9 +2048,9 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
   return (
     <section className="opportunity-page">
       <div className="radar-hero">
-        <p className="eyebrow">External Opportunity Board</p>
-        <h2>国内招标网站实时线索 ──► AI 匹配内部专家能力 ──► 收藏至我的助理</h2>
-        <span>监控关键词：熔炼炉、真空熔炼、悬浮熔炼、新材料、金属材料 · 当前收藏目标：{workspaceName} 的助理</span>
+        <p className="eyebrow">External Opportunity Pool</p>
+        <h2>外部线索池 ──► 真实需求 / 预算 / 时间 / 优势评分 ──► 转客户与任务</h2>
+        <span>优先展示近 180 天线索；当前收藏目标：{workspaceName} 的助理</span>
         <button className="agent-run-button radar-run" onClick={runExternalAgent} disabled={running}>
           <Newspaper size={18} />
           {running ? '外部 Agent 搜索中...' : '运行外部机会 Agent'}
@@ -2029,6 +2064,19 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
               <small>{card.source}</small>
               <h3>{card.title}</h3>
               <p>{card.why}</p>
+              <div className="opportunity-score">
+                <strong>{opportunityScore(card)}</strong>
+                <span>综合评分</span>
+              </div>
+              <div className="quality-grid">
+                <span>需求 {qualityValue(card, 'demand')}/5</span>
+                <span>预算 {qualityValue(card, 'budget')}/5</span>
+                <span>时间 {qualityValue(card, 'timing')}/5</span>
+                <span>优势 {qualityValue(card, 'advantage')}/5</span>
+              </div>
+              {(card.recommendation || card.quality?.recommendation) && (
+                <p className="action-note">{card.recommendation || card.quality.recommendation}</p>
+              )}
               {card.urgency && <p className="urgency-note">紧急度：{card.urgency}</p>}
               {card.action && <p className="action-note">{card.action}</p>}
               {card.date && <p className="action-note">发布日期：{card.date}</p>}
@@ -2217,6 +2265,25 @@ function mergeById(incoming = [], current = []) {
 
 function priorityLabel(priority) {
   return ({ high: '高优先级', medium: '中优先级', low: '低优先级' })[priority] ?? '普通';
+}
+
+function normalizeStageLabel(stage = '') {
+  const value = String(stage || '');
+  if (/未接触|线索/.test(value)) return '未接触';
+  if (/已接触|洽谈|沟通/.test(value)) return '已接触';
+  if (/有意向|意向|方案/.test(value)) return '有意向';
+  if (/待报价|报价/.test(value)) return '待报价';
+  if (/待成交|商务|谈判|合同/.test(value)) return '待成交';
+  if (/已成交|成交|维护/.test(value)) return '已成交';
+  return '未接触';
+}
+
+function opportunityScore(card) {
+  return Number(card?.quality?.total ?? card?.score ?? String(card?.match ?? '').match(/\d+/)?.[0] ?? 60);
+}
+
+function qualityValue(card, key) {
+  return Number(card?.quality?.[key] ?? 3);
 }
 
 function artifactPreview(item) {

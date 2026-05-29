@@ -1149,8 +1149,8 @@ function getSystemAgentSpec(id) {
     return [
       '你是报价 Agent，业务负责人是 Larry。你理解公司的基础业务：悬浮真空熔炼设备、新型金属材料研发、材料试制、熔炼服务、设备选型和客户开发。',
       '你的目标是把客户需求转成内部报价草案，不直接承诺正式价格；重要报价必须提醒提交 Jamie 审批。',
-      '重点提取：客户背景、报价类型（设备/服务/材料试制/工艺验证/打包）、缺失参数、风险、报价组成、交付周期、需要同事补充的信息。',
-      '请只返回 JSON：{"title":"...","text":"...","learning":"...","quote":{"customer":"...","type":"设备报价|熔炼服务|材料试制|工艺验证|打包方案","summary":"...","missing":["..."],"risk":["..."],"next":"...","approval":"需要 Jamie 审批|Larry 可继续补充"},"broadcast":{"title":"...","content":"..."}}。',
+      '重点提取：客户背景、报价类型（设备/服务/材料试制/工艺验证/打包）、缺失参数、风险、报价组成、参考依据、价格区间、交付周期、需要同事补充的信息。',
+      '请只返回 JSON：{"title":"...","text":"...","learning":"...","quote":{"customer":"...","type":"设备报价|熔炼服务|材料试制|工艺验证|打包方案","summary":"...","components":["..."],"basis":["过往报价案例...","市场价格参考...","内部专家依据..."],"priceRange":"...","missing":["..."],"risk":["..."],"next":"...","approval":"需要 Jamie 审批|Larry 可继续补充"},"broadcast":{"title":"...","content":"..."}}。',
       'broadcast 写给 Larry 和相关同事，推动补齐参数，而不是把报价发给客户。'
     ].join('\n');
   }
@@ -1159,7 +1159,8 @@ function getSystemAgentSpec(id) {
       '你是客户管理 Agent，目标是提高客户管理效率，把客户信息、阶段、跟进动作和商机价值整理清楚。',
       '你可以读取团队对话、任务、报价草案、商机收藏和广播反馈，但输出不要泄露私密聊天原文，只输出客户卡片、阶段判断和跟进建议。',
       '重点提取：客户名称、客户类型、联系人、当前阶段、负责人、最近动作、下一步、是否需要报价、是否存在大商机。',
-      '请只返回 JSON：{"title":"...","text":"...","learning":"...","customers":[{"name":"...","type":"科研机构|航天军工|高校科研|半导体|企业客户|未知","stage":"线索|洽谈中|报价阶段|商务谈判|成交|维护","owner":"larry|gu|xiaodong|heli|guihua|zhiping|luyang|kingsong","contact":"...","phone":"...","last":"今天|本周|待确认","next":"...","priority":"high|medium|low"}],"broadcast":{"title":"...","content":"..."}}。',
+      '客户阶段只能使用：未接触、已接触、有意向、待报价、待成交、已成交。',
+      '请只返回 JSON：{"title":"...","text":"...","learning":"...","customers":[{"name":"...","type":"科研机构|航天军工|高校科研|半导体|企业客户|未知","stage":"未接触|已接触|有意向|待报价|待成交|已成交","owner":"larry|gu|xiaodong|heli|guihua|zhiping|luyang|kingsong","contact":"...","phone":"...","last":"今天|本周|待确认","next":"...","priority":"high|medium|low"}],"broadcast":{"title":"...","content":"..."}}。',
       '如果发现客户需要报价或技术确认，请把 next 写成清晰动作，系统会生成客户跟进任务。'
     ].join('\n');
   }
@@ -1168,7 +1169,8 @@ function getSystemAgentSpec(id) {
     '优先使用用户指定的国内招标网站抓取结果；如果某站点需要 JavaScript 或登录导致无法解析，要明确标为“需人工打开验证”。',
     '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
     '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',
-    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","url":"...","date":"...","learning":"...","broadcast":{"title":"...","content":"..."}}。',
+    '请按四个维度判断好商机：有没有真实需求、有没有预算、什么时候采购、我们有没有优势。',
+    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","url":"...","date":"...","quality":{"demand":1-5,"budget":1-5,"timing":1-5,"advantage":1-5,"total":1-100,"recommendation":"..."},"learning":"...","broadcast":{"title":"...","content":"..."}}。',
     'title 要像商机卡片标题，why 要讲清楚为什么可能是大机会，action 要说明同事下一步怎么验证和补充信息。'
   ].join('\n');
 }
@@ -1233,7 +1235,14 @@ function normalizeSystemAgentOutput(id, data, raw, tenderSignals = []) {
       action: data.action || tender?.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。',
       urgency: data.urgency || tender?.urgency || '需要 48 小时内验证线索真实性和联系人。',
       url: data.url || tender?.url || '',
-      date: data.date || tender?.date || ''
+      date: data.date || tender?.date || '',
+      quality: data.quality || tender?.quality || evaluateTextOpportunity(`${data.title || tender?.title || ''} ${data.why || tender?.why || ''}`),
+      recommendation:
+        data.recommendation ||
+        data.quality?.recommendation ||
+        tender?.recommendation ||
+        tender?.quality?.recommendation ||
+        '先核实真实需求、预算、采购时间和我方优势。'
     };
     return {
       id: opportunity.id,
@@ -1341,6 +1350,9 @@ function fallbackQuoteDraft() {
     customer: '待确认客户',
     type: '打包方案',
     summary: '先判断客户是需要设备整机、熔炼服务、材料试制，还是设备加服务组合。',
+    components: ['设备/服务范围', '材料体系', '检测要求', '交付周期', '质保和验收边界'],
+    basis: ['历史报价案例：待匹配', '市场同类设备/服务价格：待核验', '内部设备与材料专家经验：可引用'],
+    priceRange: '待补齐参数后生成内部区间',
     missing: ['材料体系', '单炉重量', '批次数', '检测要求', '交付时间', '客户预算'],
     risk: ['参数不足导致报价偏差', '交付周期和质保边界需要明确', '正式报价前需要 Jamie 审批'],
     next: 'Larry 牵头补齐客户需求，报价 Agent 生成内部草案后提交 Jamie 审批。',
@@ -1426,7 +1438,7 @@ function deriveWorkflowArtifactsFromMessage({ actorId, ownerId, message, reply, 
         {
           name: customerName || `${user?.name ?? ownerId} 待确认客户`,
           type: inferCustomerType(text),
-          stage: /报价/.test(text) ? '报价阶段' : /成交|复购|维护/.test(text) ? '维护' : /商务|谈判/.test(text) ? '商务谈判' : '线索',
+          stage: inferCustomerStage(text),
           owner: ownerId,
           contact: inferContact(text),
           phone: inferPhone(text),
@@ -1549,6 +1561,15 @@ function inferCustomerNext(text = '') {
   return '确认客户背景、真实需求、决策链和下一步跟进时间。';
 }
 
+function inferCustomerStage(text = '') {
+  if (/成交|签约|已下单|复购/.test(text)) return '已成交';
+  if (/商务|谈判|合同|待成交/.test(text)) return '待成交';
+  if (/报价|询价|价格|预算/.test(text)) return '待报价';
+  if (/意向|感兴趣|方案|样品|试制|验证/.test(text)) return '有意向';
+  if (/已联系|沟通|拜访|会议|访谈|交流/.test(text)) return '已接触';
+  return '未接触';
+}
+
 function inferQuoteType(text = '') {
   if (/熔炼服务|代熔|加工服务/.test(text)) return '熔炼服务';
   if (/设备|熔炼炉|真空炉|冷坩埚|悬浮/.test(text)) return '设备报价';
@@ -1572,6 +1593,16 @@ function createQuoteDraftFromText({ text, ownerId, actorId, customerName }) {
     /航天|军工|高温|难熔/.test(text) ? '高要求客户需要明确验收标准和质量责任' : '',
     /招标|采购/.test(text) ? '招标项目需要核实报名截止时间和资质要求' : ''
   ].filter(Boolean);
+  const components = quoteType === '设备报价'
+    ? ['设备主机', '真空/感应/冷却等配套模块', '安装调试', '备件耗材', '质保与验收']
+    : quoteType === '熔炼服务'
+      ? ['材料准备', '熔炼批次', '工艺验证', '检测报告', '包装交付']
+      : ['材料体系确认', '小试/样品制备', '检测分析', '工艺记录', '交付资料'];
+  const basis = [
+    '过往报价案例：从知识库匹配相似设备/服务边界',
+    '市场价格参考：同类真空炉、熔炼服务、电商/公开供应商报价待核验',
+    '内部专家依据：设备参数、材料难度、检测要求和交付风险'
+  ];
   return {
     id: `quote-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
     at: new Date().toISOString(),
@@ -1580,6 +1611,9 @@ function createQuoteDraftFromText({ text, ownerId, actorId, customerName }) {
     customer: customerName || '待确认客户',
     type: quoteType,
     summary: truncateText(`基于 ${quoteType} 需求形成内部报价草案：${String(text).replace(/\s+/g, ' ')}`, 360),
+    components,
+    basis,
+    priceRange: missing.length <= 2 ? '可生成初步区间；正式价格需负责人审核' : '参数不足，暂不生成金额，只输出报价依据和缺失项',
     missing,
     risk,
     next: '先补齐关键参数，再由报价 Agent 生成内部草案；正式对外报价前需要负责人审核。',
@@ -1589,6 +1623,7 @@ function createQuoteDraftFromText({ text, ownerId, actorId, customerName }) {
 }
 
 function createOpportunityFromText({ text, ownerId, actorId, customerName, source }) {
+  const quality = evaluateTextOpportunity(text);
   const titleBase = customerName || inferTaskTitle(text);
   return {
     id: `opportunity-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
@@ -1600,9 +1635,29 @@ function createOpportunityFromText({ text, ownerId, actorId, customerName, sourc
       ? '核实招标来源、报名条件、技术参数和截止时间，再决定是否转报价。'
       : '让负责同事确认客户背景、预算、技术参数和下一步沟通窗口。',
     urgency: /今天|紧急|招标|采购|航天/.test(text) ? '24 小时内验证。' : '本周内完成初步验证。',
+    quality,
+    recommendation: quality.recommendation,
     owner: ownerId,
     createdBy: actorId,
     date: new Date().toISOString().slice(0, 10)
+  };
+}
+
+function evaluateTextOpportunity(text = '') {
+  const demand = /客户|需求|采购|招标|询价|预算|升级|试制/.test(text) ? 4 : 2;
+  const budget = /预算|报价|采购|招标|钱|价格|合同/.test(text) ? 4 : 2;
+  const timing = /今天|紧急|尽快|本周|招标|截止/.test(text) ? 5 : /下周|近期|采购/.test(text) ? 4 : 2;
+  const advantage = /悬浮|真空|熔炼|冷坩埚|难熔|高熵|靶材|材料|设备/.test(text) ? 5 : 3;
+  return {
+    demand,
+    budget,
+    timing,
+    advantage,
+    total: Math.max(10, Math.min(100, Math.round((demand + budget + timing + advantage) * 5))),
+    recommendation:
+      demand >= 4 && advantage >= 4
+        ? '建议进入线索池并生成客户跟进任务。'
+        : '建议先补充客户背景、预算和采购时间。'
   };
 }
 
@@ -1692,6 +1747,9 @@ function persistSystemAgentArtifacts(store, id, output, actorId) {
       customer: output.quote.customer || '待确认客户',
       type: output.quote.type || '打包方案',
       summary: output.quote.summary || output.text || '',
+      components: Array.isArray(output.quote.components) ? output.quote.components : [],
+      basis: Array.isArray(output.quote.basis) ? output.quote.basis : [],
+      priceRange: output.quote.priceRange || '待补齐参数后生成内部区间',
       missing: Array.isArray(output.quote.missing) ? output.quote.missing : [],
       risk: Array.isArray(output.quote.risk) ? output.quote.risk : [],
       next: output.quote.next || '补齐报价参数并形成内部草案。',
@@ -1751,7 +1809,7 @@ function normalizeCustomerInsight(customer, actorId) {
     id: customer.id || `customer-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
     name,
     type: String(customer.type || '未知').slice(0, 40),
-    stage: String(customer.stage || '线索').slice(0, 40),
+    stage: normalizeCustomerStage(customer.stage),
     owner: String(customer.owner || WORKFLOW_OWNER_ID).toLowerCase(),
     collaborators: Array.isArray(customer.collaborators) ? customer.collaborators.map((id) => String(id).toLowerCase()) : [],
     contact: String(customer.contact || '待确认').slice(0, 80),
@@ -1762,6 +1820,17 @@ function normalizeCustomerInsight(customer, actorId) {
     createdAt: new Date().toISOString(),
     createdBy: actorId
   };
+}
+
+function normalizeCustomerStage(stage = '') {
+  const value = String(stage || '').trim();
+  if (/未接触|线索/.test(value)) return '未接触';
+  if (/已接触|洽谈|沟通/.test(value)) return '已接触';
+  if (/有意向|意向|方案/.test(value)) return '有意向';
+  if (/待报价|报价/.test(value)) return '待报价';
+  if (/待成交|商务|谈判|合同/.test(value)) return '待成交';
+  if (/已成交|成交|维护/.test(value)) return '已成交';
+  return '未接触';
 }
 
 function fallbackCustomerInsights() {

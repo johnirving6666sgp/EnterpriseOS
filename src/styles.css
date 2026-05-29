@@ -133,6 +133,34 @@ button:disabled {
   margin-bottom: 16px;
 }
 
+.business-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 1240px;
+  margin: -4px auto 16px;
+  padding: 10px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.business-flow span {
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.business-flow i {
+  color: #98a2b3;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: #667085;
@@ -1259,13 +1287,21 @@ select {
 }
 
 .task-board,
-.customer-grid {
+.customer-grid,
+.customer-funnel {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
-.task-column {
+.customer-funnel {
+  grid-template-columns: repeat(6, minmax(180px, 1fr));
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.task-column,
+.customer-stage-column {
   display: grid;
   align-content: start;
   gap: 9px;
@@ -1424,6 +1460,42 @@ select {
   gap: 10px;
 }
 
+.opportunity-score {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.opportunity-score strong {
+  color: #155e52;
+  font-size: 32px;
+  line-height: 1;
+}
+
+.opportunity-score span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.quality-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.quality-grid span {
+  padding: 7px 6px;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-size: 12px;
+  font-weight: 850;
+  text-align: center;
+}
+
 .activity-row {
   display: grid;
   grid-template-columns: 72px 1fr;
@@ -1466,9 +1538,14 @@ select {
   .feedback-summary,
   .task-board,
   .customer-grid,
+  .customer-funnel,
   .quote-layout,
   .broadcast-center-grid {
     grid-template-columns: 1fr;
+  }
+
+  .customer-funnel {
+    overflow: visible;
   }
 }
 
@@ -1492,6 +1569,10 @@ select {
 
   .composer-tool-row {
     grid-template-columns: 1fr;
+  }
+
+  .quality-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .identity-line {

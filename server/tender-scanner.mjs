@@ -115,7 +115,7 @@ export async function scanTenderSources({
     }
   }
 
-  const sorted = dedupe(opportunities).sort(sortOpportunities);
+  const sorted = dedupe(opportunities).filter(isFreshOpportunity).sort(sortOpportunities);
   const resultOpportunities = [
     ...sorted.filter((item) => !item.manual).slice(0, limit),
     ...sorted.filter((item) => item.manual)
@@ -309,6 +309,7 @@ function manualOpportunity({ source, keyword, today, reason }) {
 
 function toOpportunity({ title, platform, sourceId, keyword, type, region, date, url, manual = false, manualReason = '' }) {
   const score = scoreOpportunity(title, keyword, manual);
+  const quality = evaluateOpportunityQuality({ title, keyword, type, date, manual, score });
   return {
     id: stableId([sourceId, keyword, title, url]),
     title,
@@ -329,9 +330,47 @@ function toOpportunity({ title, platform, sourceId, keyword, type, region, date,
       : '收藏后交给个人助理或报价 Agent 拆解客户背景、设备/服务匹配度、报价风险和下一步跟进动作。',
     urgency: manual ? '今天人工验证一次。' : '24 小时内核实公告详情、报名条件和是否需要快速报价。',
     score,
+    quality,
+    recommendation: quality.recommendation,
     manual,
     createdAt: new Date().toISOString()
   };
+}
+
+function evaluateOpportunityQuality({ title, keyword, type, date, manual, score }) {
+  const text = `${title} ${keyword} ${type}`;
+  const days = daysSince(date);
+  const demand = /招标|采购|询价|公告|项目|升级|设备|试制|实验室/.test(text) ? 4 : 2;
+  const budget = /招标|采购|预算|中标|成交/.test(text) ? 4 : manual ? 2 : 3;
+  const timing = days === null ? (manual ? 2 : 3) : days <= 30 ? 5 : days <= 90 ? 4 : days <= 180 ? 2 : 1;
+  const advantage = /悬浮|真空|熔炼|冷坩埚|难熔|高熵|靶材|材料|合金/.test(text) ? 5 : 3;
+  const total = Math.round((demand + budget + timing + advantage) * 5 + score * 0.2);
+  return {
+    demand,
+    budget,
+    timing,
+    advantage,
+    total: Math.max(10, Math.min(100, total)),
+    recommendation:
+      demand >= 4 && timing >= 4 && advantage >= 4
+        ? '优先跟进：先核实采购单位、技术参数和报名截止时间。'
+        : manual
+          ? '人工核验：先打开来源确认是否为最新公告。'
+          : '观察跟进：补充客户背景后再决定是否转报价。'
+  };
+}
+
+function daysSince(date) {
+  if (!date) return null;
+  const value = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(value)) return null;
+  return Math.floor((Date.now() - value) / 86400000);
+}
+
+function isFreshOpportunity(item) {
+  if (item.manual || !item.date) return true;
+  const days = daysSince(item.date);
+  return days === null || days <= 180;
 }
 
 function scoreOpportunity(title, keyword, manual) {
