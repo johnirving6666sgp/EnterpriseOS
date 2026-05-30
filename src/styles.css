@@ -1285,6 +1285,25 @@ select {
   margin-top: 0;
 }
 
+.system-run-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #053b22;
+  background: rgba(255, 255, 255, 0.82);
+  line-height: 1.45;
+  font-weight: 850;
+}
+
+.system-run-notice.loading {
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.system-run-notice.error {
+  color: #9f1239;
+  background: #fff1f2;
+}
+
 .masonry-board {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

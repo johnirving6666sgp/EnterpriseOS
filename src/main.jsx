@@ -328,6 +328,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [agentFeedback, setAgentFeedback] = useState([]);
   const [taskNotice, setTaskNotice] = useState(null);
   const [systemRunning, setSystemRunning] = useState({});
+  const [systemRunNotice, setSystemRunNotice] = useState({});
   const [broadcasts, setBroadcasts] = useState([
     {
       id: 'bc-plan-larry-gu',
@@ -924,6 +925,10 @@ function EnterpriseApp({ auth, onLogout }) {
   const runSystemAgent = (id) => {
     if ((id === 'internal' && !isJamie) || systemRunning[id]) return;
     setSystemRunning((current) => ({ ...current, [id]: true }));
+    setSystemRunNotice((current) => ({
+      ...current,
+      [id]: { status: 'loading', text: `${getSystemAgentDisplayName(id)} 正在运行...` }
+    }));
     apiFetch(`/api/system-agents/${id}/run`, { method: 'POST' })
       .then((response) => {
         if (!response.ok) throw new Error('system_agent_failed');
@@ -951,6 +956,19 @@ function EnterpriseApp({ auth, onLogout }) {
         setSystemOutputs((current) => ({
           ...current,
           [id]: [payload.output, ...(current[id] ?? [])].slice(0, 12)
+        }));
+        setSystemRunNotice((current) => ({
+          ...current,
+          [id]: {
+            status: 'success',
+            text: describeSystemRunResult(id, payload.output, payload.createdTasks)
+          }
+        }));
+      })
+      .catch((error) => {
+        setSystemRunNotice((current) => ({
+          ...current,
+          [id]: { status: 'error', text: `${getSystemAgentDisplayName(id)} 运行失败：${error.message}` }
         }));
       })
       .finally(() => setSystemRunning((current) => ({ ...current, [id]: false })));
@@ -1254,6 +1272,7 @@ function EnterpriseApp({ auth, onLogout }) {
           workspaceName={access.ownerName}
           runExternalAgent={() => runSystemAgent('external')}
           running={systemRunning.external}
+          runNotice={systemRunNotice.external}
           setPage={setPage}
         />
       )}
@@ -2427,7 +2446,7 @@ function BroadcastCenter({ broadcasts, createBroadcast, setPage, totalUsage }) {
   );
 }
 
-function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running, setPage }) {
+function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running, runNotice, setPage }) {
   return (
     <section className="opportunity-page">
       <div className="radar-hero">
@@ -2441,6 +2460,11 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
             {running ? '外部 Agent 搜索中...' : '运行外部机会 Agent'}
           </button>
         </div>
+        {runNotice && (
+          <div className={`system-run-notice ${runNotice.status}`}>
+            {runNotice.text}
+          </div>
+        )}
       </div>
       <div className="masonry-board">
         {opportunities.map((card) => {
@@ -2734,6 +2758,23 @@ function mergeById(incoming = [], current = []) {
     seen.add(item.id);
     return true;
   });
+}
+
+function getSystemAgentDisplayName(id) {
+  return systemAgents.find((agent) => agent.id === id)?.name ?? '系统 Agent';
+}
+
+function describeSystemRunResult(id, output, createdTasks = []) {
+  if (id === 'external') {
+    const title = output?.opportunity?.title || output?.title || '外部线索';
+    const source = output?.opportunity?.source || '外部来源';
+    return `外部机会 Agent 已完成扫描：${title}（${source}）。${createdTasks?.length ? `并生成 ${createdTasks.length} 个跟进任务。` : '如果没有看到新卡片，说明本次结果与已有线索相近或暂无更高价值新线索。'}`;
+  }
+  if (id === 'task') return `任务 Agent 已完成：生成/更新 ${createdTasks?.length ?? 0} 个任务。`;
+  if (id === 'quote') return `报价 Agent 已完成：${output?.quote?.customer || output?.title || '已生成报价建议'}。`;
+  if (id === 'customer') return `客户管理 Agent 已完成：${output?.customers?.length ?? 0} 条客户建议。`;
+  if (id === 'internal') return `内部信息 Agent 已完成：${output?.title || '已生成学习洞察'}。`;
+  return `${getSystemAgentDisplayName(id)} 已完成运行。`;
 }
 
 function priorityLabel(priority) {
