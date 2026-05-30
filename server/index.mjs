@@ -271,6 +271,9 @@ function ensureDefaultUsersAndAgents(store) {
     store.customers = seed.customers.map((customer) => ({ ...customer, createdAt: new Date().toISOString(), createdBy: 'system' }));
     changed = true;
   }
+  if (normalizeExistingCustomerStages(store)) {
+    changed = true;
+  }
 
   const addedUsers = defaultUsers.filter((user) => store.users.some((item) => item.id === user.id));
   if (changed) {
@@ -1407,6 +1410,7 @@ function getSystemAgentSpec(id) {
       '你可以读取团队对话、任务、报价草案、商机收藏和广播反馈，但输出不要泄露私密聊天原文，只输出客户卡片、阶段判断和跟进建议。',
       '重点提取：客户名称、客户类型、联系人、当前阶段、负责人、最近动作、下一步、是否需要报价、是否存在大商机。',
       '客户阶段只能使用：未接触、已接触、有意向、待报价、待成交、已成交。',
+      '阶段判断规则：看到客户/招标/联系方式但还只是“准备联系、明天拜访、计划沟通、找到联系方式”，必须归为未接触；只有已经电话、微信、拜访、会议或明确沟通过，才归为已接触。',
       '请只返回 JSON：{"title":"...","text":"...","learning":"...","customers":[{"name":"...","type":"科研机构|航天军工|高校科研|半导体|企业客户|未知","stage":"未接触|已接触|有意向|待报价|待成交|已成交","owner":"larry|gu|xiaodong|heli|guihua|zhiping|luyang|kingsong","contact":"...","phone":"...","last":"今天|本周|待确认","next":"...","priority":"high|medium|low"}],"broadcast":{"title":"...","content":"..."}}。',
       '如果发现客户需要报价或技术确认，请把 next 写成清晰动作，系统会生成客户跟进任务。'
     ].join('\n');
@@ -1805,7 +1809,7 @@ function deriveWorkflowArtifactsFromMessage({ actorId, ownerId, message, reply, 
         {
           name: customerName || `${user?.name ?? ownerId} 待确认客户`,
           type: inferCustomerType(text),
-          stage: inferCustomerStage(text),
+          stage: inferCustomerStage(message),
           owner: ownerId,
           contact: inferContact(text),
           phone: inferPhone(text),
@@ -1933,8 +1937,16 @@ function inferCustomerStage(text = '') {
   if (/商务|谈判|合同|待成交/.test(text)) return '待成交';
   if (/报价|询价|价格|预算/.test(text)) return '待报价';
   if (/意向|感兴趣|方案|样品|试制|验证/.test(text)) return '有意向';
+  if (isFutureContactText(text)) return '未接触';
   if (/已联系|沟通|拜访|会议|访谈|交流/.test(text)) return '已接触';
   return '未接触';
+}
+
+function isFutureContactText(text = '') {
+  const value = String(text || '');
+  const futureIntent = /(准备|计划|打算|想先|明天|后天|下周|稍后|即将|准备.*去|准备.*和|先去|后续).*?(联系|沟通|拜访|接触|交流|电话|微信|对接)|找到.{0,12}(联系方式|联系人).*?(准备|计划|明天|后续|先去)/.test(value);
+  const alreadyContacted = /(已|已经|刚刚|今天已|上午已|下午已).{0,8}(联系|沟通|拜访|接触|交流|电话|微信|对接)|和.{0,20}(联系|沟通|拜访|接触|交流|电话|微信|对接)(过|了)/.test(value);
+  return futureIntent && !alreadyContacted;
 }
 
 function inferQuoteType(text = '') {
@@ -2082,6 +2094,22 @@ function upsertCustomers(store, customers) {
     }
   }
   store.customers = store.customers.slice(0, 80);
+}
+
+function normalizeExistingCustomerStages(store) {
+  let changed = false;
+  for (const customer of store.customers ?? []) {
+    const combined = [customer.name, customer.stage, customer.last, customer.next, customer.note, customer.source]
+      .filter(Boolean)
+      .join(' ');
+    if (normalizeCustomerStage(customer.stage) === '已接触' && isFutureContactText(combined)) {
+      customer.stage = '未接触';
+      customer.updatedAt = new Date().toISOString();
+      customer.stageNote = '系统根据“准备/计划联系、尚未实际沟通”的语义自动校正为未接触。';
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function dedupeByTitleAndOwner(items) {
