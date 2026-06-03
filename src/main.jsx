@@ -67,9 +67,9 @@ const providerOptions = [
     models: ['claude-3-5-haiku', 'claude-3-7-sonnet', 'claude-opus-4']
   },
   {
-    id: 'gpt',
-    label: 'GPT',
-    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-5.2']
+    id: 'openai',
+    label: 'OpenAI 直连',
+    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini']
   },
   {
     id: 'openrouter',
