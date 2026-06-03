@@ -1379,6 +1379,7 @@ function BusinessFlowStrip() {
 }
 
 function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, isJamie, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
+  const [dashboardFocus, setDashboardFocus] = useState('leads');
   const focusLeads = opportunities.slice(0, 3);
   const activeTasks = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).slice(0, 5);
   const activeQuotes = quotes.filter((quote) => quote.approval !== '已完成').slice(0, 3);
@@ -1390,11 +1391,19 @@ function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, 
   return (
     <section className="dashboard-page">
       <div className="kpi-row">
-        <KpiCard icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} onClick={() => setPage('opportunity')} />
-        <KpiCard icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" onClick={() => setPage('crm')} />
-        <KpiCard icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" onClick={() => setPage('tasks')} />
-        <KpiCard icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" onClick={() => setPage('quote')} />
+        <KpiCard active={dashboardFocus === 'leads'} icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} onClick={() => setDashboardFocus('leads')} />
+        <KpiCard active={dashboardFocus === 'customers'} icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" onClick={() => setDashboardFocus('customers')} />
+        <KpiCard active={dashboardFocus === 'tasks'} icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" onClick={() => setDashboardFocus('tasks')} />
+        <KpiCard active={dashboardFocus === 'quotes'} icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" onClick={() => setDashboardFocus('quotes')} />
       </div>
+      <KpiDetailPanel
+        activeQuotes={activeQuotes}
+        activeTasks={activeTasks}
+        customers={customers}
+        focus={dashboardFocus}
+        leads={focusLeads}
+        setPage={setPage}
+      />
       <div className="dashboard-hero">
         <div>
           <p className="eyebrow">Business Workspace</p>
@@ -1480,6 +1489,75 @@ function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, 
   );
 }
 
+function KpiDetailPanel({ activeQuotes, activeTasks, customers, focus, leads, setPage }) {
+  const config = {
+    leads: {
+      title: '重点线索内容',
+      action: '进入线索池',
+      page: 'opportunity',
+      empty: '暂无新的重点线索。',
+      items: leads.slice(0, 2).map((item) => ({
+        id: item.id,
+        title: item.title,
+        meta: `${opportunityScore(item)} 分 · ${item.recommendedOwner ? `建议 ${getTeammateName(item.recommendedOwner)}` : item.recommendation || item.quality?.recommendation || '待判断'}`
+      }))
+    },
+    customers: {
+      title: '我的客户内容',
+      action: '进入客户管理',
+      page: 'crm',
+      empty: '暂无客户记录。',
+      items: customers.slice(0, 2).map((customer) => ({
+        id: customer.id || customer.name,
+        title: customer.name,
+        meta: `${normalizeStageLabel(customer.stage)} · 下一步：${customer.next || '待确认'}`
+      }))
+    },
+    tasks: {
+      title: '待办任务内容',
+      action: '进入任务看板',
+      page: 'tasks',
+      empty: '暂无待办任务。',
+      items: activeTasks.slice(0, 2).map((task) => ({
+        id: task.id,
+        title: task.title,
+        meta: `${getTeammateName(task.owner)} · ${task.due} · ${task.source}`
+      }))
+    },
+    quotes: {
+      title: '待处理报价内容',
+      action: '进入报价方案',
+      page: 'quote',
+      empty: '暂无待处理报价。',
+      items: activeQuotes.slice(0, 2).map((quote) => ({
+        id: quote.id,
+        title: quote.customer,
+        meta: `${quote.type} · ${quote.priceRange || quote.approval || '待补齐参数'}`
+      }))
+    }
+  };
+  return (
+    <section className="kpi-detail-grid" aria-label="工作台统计内容">
+      {Object.entries(config).map(([key, section]) => (
+        <article className={`kpi-detail-panel ${focus === key ? 'active' : ''}`} key={key}>
+          <div className="kpi-detail-head">
+            <strong>{section.title}</strong>
+            <button onClick={() => setPage(section.page)}>{section.action}</button>
+          </div>
+          <div className="kpi-detail-list">
+            {section.items.length ? section.items.map((item) => (
+              <button className="kpi-detail-row" key={item.id} onClick={() => setPage(section.page)}>
+                <span>{item.title}</span>
+                <small>{item.meta}</small>
+              </button>
+            )) : <p className="empty-hint">{section.empty}</p>}
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
 function AgentGrowthBadge({ compact = false, growth }) {
   if (!growth) return null;
   return (
@@ -1523,9 +1601,9 @@ function AgentGrowthPanel({ growth }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, onClick, sub, tone, value }) {
+function KpiCard({ active = false, icon: Icon, label, onClick, sub, tone, value }) {
   return (
-    <button type="button" className={`kpi-card ${tone}`} onClick={onClick} aria-label={`打开${label}`}>
+    <button type="button" className={`kpi-card ${tone} ${active ? 'active' : ''}`} onClick={onClick} aria-label={`查看${label}内容`}>
       <div className="kpi-icon">
         <Icon size={20} />
       </div>
