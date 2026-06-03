@@ -1200,6 +1200,10 @@ function EnterpriseApp({ auth, onLogout }) {
               <Cpu size={17} />
               <i />
             </button>
+            <button className="topbar-logout" onClick={onLogout} aria-label="退出登录">
+              <LogOut size={16} />
+              <span>退出登录</span>
+            </button>
           </div>
         </header>
         <div className="enterprise-content">

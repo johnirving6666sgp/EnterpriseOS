@@ -289,6 +289,20 @@ button:disabled {
   background: #f1f5f9;
 }
 
+.topbar-actions .topbar-logout {
+  display: flex;
+  gap: 6px;
+  width: auto;
+  min-width: 94px;
+  padding: 0 12px;
+  color: #334155;
+}
+
+.topbar-logout span {
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .topbar-actions button:hover {
   color: #1e293b;
   background: #e2e8f0;
@@ -2530,6 +2544,11 @@ select {
 
   .topbar-actions {
     margin-left: auto;
+  }
+
+  .topbar-actions .topbar-logout {
+    min-width: 88px;
+    padding: 0 10px;
   }
 
   .enterprise-content {
