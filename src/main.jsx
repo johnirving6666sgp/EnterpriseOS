@@ -1380,6 +1380,7 @@ function BusinessFlowStrip() {
 
 function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, isJamie, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
   const [dashboardFocus, setDashboardFocus] = useState('leads');
+  const kpiDetailRef = useRef(null);
   const focusLeads = opportunities.slice(0, 3);
   const activeTasks = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).slice(0, 5);
   const activeQuotes = quotes.filter((quote) => quote.approval !== '已完成').slice(0, 3);
@@ -1388,13 +1389,19 @@ function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, 
   const workPrompts = buildWorkPrompts({ isJamie, tasks, broadcasts, quotes, savedCards, agentFeedback });
   const openTaskCount = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).length;
   const quoteCount = quotes.filter((quote) => quote.approval !== '已完成').length;
+  const openDashboardFocus = (focus) => {
+    setDashboardFocus(focus);
+    window.requestAnimationFrame(() => {
+      kpiDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
   return (
     <section className="dashboard-page">
       <div className="kpi-row">
-        <KpiCard active={dashboardFocus === 'leads'} icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} onClick={() => setDashboardFocus('leads')} />
-        <KpiCard active={dashboardFocus === 'customers'} icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" onClick={() => setDashboardFocus('customers')} />
-        <KpiCard active={dashboardFocus === 'tasks'} icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" onClick={() => setDashboardFocus('tasks')} />
-        <KpiCard active={dashboardFocus === 'quotes'} icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" onClick={() => setDashboardFocus('quotes')} />
+        <KpiCard active={dashboardFocus === 'leads'} icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} onClick={() => openDashboardFocus('leads')} />
+        <KpiCard active={dashboardFocus === 'customers'} icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" onClick={() => openDashboardFocus('customers')} />
+        <KpiCard active={dashboardFocus === 'tasks'} icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" onClick={() => openDashboardFocus('tasks')} />
+        <KpiCard active={dashboardFocus === 'quotes'} icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" onClick={() => openDashboardFocus('quotes')} />
       </div>
       <KpiDetailPanel
         activeQuotes={activeQuotes}
@@ -1402,6 +1409,7 @@ function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, 
         customers={customers}
         focus={dashboardFocus}
         leads={focusLeads}
+        panelRef={kpiDetailRef}
         setPage={setPage}
       />
       <div className="dashboard-hero">
@@ -1489,7 +1497,7 @@ function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, 
   );
 }
 
-function KpiDetailPanel({ activeQuotes, activeTasks, customers, focus, leads, setPage }) {
+function KpiDetailPanel({ activeQuotes, activeTasks, customers, focus, leads, panelRef, setPage }) {
   const config = {
     leads: {
       title: '重点线索内容',
@@ -1536,12 +1544,20 @@ function KpiDetailPanel({ activeQuotes, activeTasks, customers, focus, leads, se
       }))
     }
   };
+  const orderedSections = Object.entries(config).sort(([leftKey], [rightKey]) => {
+    if (leftKey === focus) return -1;
+    if (rightKey === focus) return 1;
+    return 0;
+  });
   return (
-    <section className="kpi-detail-grid" aria-label="工作台统计内容">
-      {Object.entries(config).map(([key, section]) => (
-        <article className={`kpi-detail-panel ${focus === key ? 'active' : ''}`} key={key}>
+    <section className="kpi-detail-grid" ref={panelRef} aria-label="工作台统计内容">
+      {orderedSections.map(([key, section]) => (
+        <article className={`kpi-detail-panel ${focus === key ? 'active' : ''}`} id={`dashboard-kpi-${key}`} key={key}>
           <div className="kpi-detail-head">
-            <strong>{section.title}</strong>
+            <div>
+              {focus === key && <span>正在查看</span>}
+              <strong>{section.title}</strong>
+            </div>
             <button onClick={() => setPage(section.page)}>{section.action}</button>
           </div>
           <div className="kpi-detail-list">
