@@ -1476,6 +1476,10 @@ function AgentGrowthBadge({ compact = false, growth }) {
   return (
     <div className={`agent-growth-badge ${compact ? 'compact' : ''}`}>
       <span>{growth.levelName}</span>
+      <div className="agent-star-rating" aria-label={`${growth.title}，${growth.starValue} 星`}>
+        <b>★★★★★</b>
+        <i style={{ width: `${growth.starPercent}%` }}>★★★★★</i>
+      </div>
       <strong>{growth.title}</strong>
       {!compact && (
         <>
@@ -3003,16 +3007,16 @@ function buildLearningDigest({ agentFeedback = [], systemOutputs = {}, tasks = [
 }
 
 const agentGrowthLevels = [
-  { level: 1, title: '初级', min: 0 },
-  { level: 2, title: '半星', min: 12 },
-  { level: 3, title: '一星', min: 28 },
-  { level: 4, title: '一星半', min: 48 },
-  { level: 5, title: '二星', min: 74 },
-  { level: 6, title: '二星半', min: 106 },
-  { level: 7, title: '三星', min: 144 },
-  { level: 8, title: '三星半', min: 188 },
-  { level: 9, title: '四星', min: 238 },
-  { level: 10, title: '五星', min: 300 }
+  { level: 1, title: '初级', starValue: 0, min: 0 },
+  { level: 2, title: '半星', starValue: 0.5, min: 12 },
+  { level: 3, title: '一星', starValue: 1, min: 28 },
+  { level: 4, title: '一星半', starValue: 1.5, min: 48 },
+  { level: 5, title: '二星', starValue: 2, min: 74 },
+  { level: 6, title: '二星半', starValue: 2.5, min: 106 },
+  { level: 7, title: '三星', starValue: 3, min: 144 },
+  { level: 8, title: '三星半', starValue: 3.5, min: 188 },
+  { level: 9, title: '四星', starValue: 4, min: 238 },
+  { level: 10, title: '五星', starValue: 5, min: 300 }
 ];
 
 function buildAgentGrowthMap({ agentFeedback = [], customers = [], messagesByUser = {}, quotes = [], savedByUser = {}, systemOutputs = {}, tasks = [], teammates = [] }) {
@@ -3076,6 +3080,8 @@ function buildAgentGrowth({ agentName, score, stats }) {
     level: current.level,
     title: current.title,
     levelName: `Lv${current.level} · ${current.title}`,
+    starValue: current.starValue,
+    starPercent: Math.round((current.starValue / 5) * 100),
     score,
     progress,
     stats,

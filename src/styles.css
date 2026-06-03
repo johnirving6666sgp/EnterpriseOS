@@ -770,6 +770,42 @@ button:disabled {
   font-size: 12px;
 }
 
+.agent-star-rating {
+  position: relative;
+  width: 94px;
+  height: 19px;
+  color: #cbd5e1;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  line-height: 1;
+}
+
+.agent-star-rating b,
+.agent-star-rating i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.agent-star-rating b {
+  color: #94a3b8;
+}
+
+.agent-star-rating i {
+  color: #f59e0b;
+  text-shadow: 0 1px 2px rgba(245, 158, 11, 0.2);
+}
+
+.agent-growth-badge.compact .agent-star-rating {
+  width: 82px;
+  height: 16px;
+  font-size: 15px;
+}
+
 .agent-growth-badge small {
   color: #64748b;
   font-size: 11px;
