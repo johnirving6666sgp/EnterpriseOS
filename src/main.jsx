@@ -107,9 +107,9 @@ const systemAgents = [
     id: 'quote',
     name: '报价 Agent',
     job: '生成报价方案、报价构成、参考依据、缺失参数和风险',
-    defaultProvider: 'openrouter',
-    defaultModel: 'openrouter/openai/gpt-4.1-mini',
-    reason: '报价需要稳妥、结构化和可审批，默认 GPT-4.1 mini；关键客户报价可升 GPT-4.1。'
+    defaultProvider: 'claude',
+    defaultModel: 'claude-3-7-sonnet',
+    reason: '报价需要稳妥、结构化和可审批，默认使用 Claude 均衡模型；关键客户报价可临时升 Claude 强模型。'
   },
   {
     id: 'internal',
@@ -132,7 +132,7 @@ const agentResponsibilityRules = [
 
 const teammates = [
   { id: 'jamie', name: 'Jamie', agent: 'Jamie_AI', model: 'strong', role: 'Agent 成长与效率教练' },
-  { id: 'larry', name: 'Larry', agent: 'Larry_AI', model: 'balanced', role: '任务/报价流程负责人' },
+  { id: 'larry', name: 'Larry', agent: 'Larry_AI', model: 'strong', role: '任务/报价流程负责人' },
   { id: 'gu', name: 'Gu', agent: 'Gu_AI', model: 'strong', role: '工艺与设备参数' },
   { id: 'xiaodong', name: 'Xiaodong', agent: 'Xiaodong_AI', model: 'balanced', role: '项目协作' },
   { id: 'heli', name: 'Heli', agent: 'Heli_AI', model: 'lite', role: '运营支持' },
@@ -144,7 +144,7 @@ const teammates = [
 
 const recommendedAgentRoutes = {
   jamie: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
-  larry: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  larry: { modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4' },
   gu: { modelTier: 'strong', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1' },
   xiaodong: { modelTier: 'balanced', provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   heli: { modelTier: 'lite', provider: 'openrouter', apiModel: 'openrouter/anthropic/claude-3.5-haiku' },
@@ -158,7 +158,7 @@ const recommendedSystemRoutes = {
   internal: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   task: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-  quote: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  quote: { provider: 'claude', apiModel: 'claude-3-7-sonnet' },
   customer: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
 };
 
