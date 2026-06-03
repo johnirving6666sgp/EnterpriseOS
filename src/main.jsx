@@ -10,12 +10,17 @@ import {
   CircleDollarSign,
   Cpu,
   FileText,
+  Home,
   Layers3,
+  LogOut,
   Mic,
   Newspaper,
   Paperclip,
   Radio,
+  Search,
   Send,
+  Settings,
+  ShieldCheck,
   Sparkles,
   Users,
   UserCheck,
@@ -1105,58 +1110,88 @@ function EnterpriseApp({ auth, onLogout }) {
       .catch(() => {});
   };
 
-  return (
-    <main className="app-shell">
-      <header className="app-top">
-        <div>
-          <p className="eyebrow">ClawOS Enterprise MVP</p>
-          <h1>从线索到客户，再到任务、报价和复盘</h1>
-        </div>
-        <nav className="top-nav" aria-label="页面导航">
-          <button className={visiblePage === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}>
-            业务工作台
-          </button>
-          <button className={visiblePage === 'workspace' ? 'active' : ''} onClick={() => setPage('workspace')}>
-            我的 Agent
-          </button>
-          <button className={visiblePage === 'opportunity' ? 'active' : ''} onClick={() => setPage('opportunity')}>
-            商机雷达
-          </button>
-          {permissions.customers !== false && (
-            <button className={visiblePage === 'crm' ? 'active' : ''} onClick={() => setPage('crm')}>
-              客户管理
-            </button>
-          )}
-          {permissions.tasks !== false && (
-            <button className={visiblePage === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>
-              任务看板
-            </button>
-          )}
-          {permissions.quote !== false && (
-            <button className={visiblePage === 'quote' ? 'active' : ''} onClick={() => setPage('quote')}>
-              报价方案
-            </button>
-          )}
-          {permissions.insight === true && (
-            <button className={visiblePage === 'insight' ? 'active' : ''} onClick={() => setPage('insight')}>
-              内部信息仓
-            </button>
-          )}
-          <button className={visiblePage === 'broadcast' ? 'active' : ''} onClick={() => setPage('broadcast')}>
-            广播中心
-          </button>
-          {isJamie && (
-            <button className={visiblePage === 'commander' ? 'active' : ''} onClick={() => setPage('commander')}>
-              Jamie Central
-            </button>
-          )}
-          <span className="login-chip">当前登录：{auth.user.name}</span>
-          <button onClick={onLogout}>退出登录</button>
-        </nav>
-      </header>
-      <BusinessFlowStrip />
+  const navItems = [
+    { id: 'dashboard', label: '业务工作台', icon: Home, group: '核心业务' },
+    { id: 'workspace', label: '我的 Agent', icon: Bot, group: '核心业务' },
+    { id: 'opportunity', label: '线索池', icon: Newspaper, group: '业务流程' },
+    permissions.customers !== false && { id: 'crm', label: '客户管理', icon: Users, group: '业务流程' },
+    permissions.tasks !== false && { id: 'tasks', label: '任务看板', icon: ClipboardList, group: '业务流程', badge: tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).length },
+    permissions.quote !== false && { id: 'quote', label: '报价方案', icon: CircleDollarSign, group: '业务流程', badge: quotes.filter((quote) => quote.approval !== '已完成').length },
+    permissions.insight === true && { id: 'insight', label: '内部信息仓', icon: Brain, group: '组织学习' },
+    { id: 'broadcast', label: '广播中心', icon: Radio, group: '组织学习', badge: broadcasts.length },
+    isJamie && { id: 'commander', label: 'Jamie Central', icon: ShieldCheck, group: '管理' }
+  ].filter(Boolean);
+  const pageMeta = navItems.find((item) => item.id === visiblePage) ?? navItems[0];
 
-      {visiblePage === 'dashboard' && (
+  return (
+    <main className="app-shell enterprise-layout">
+      <aside className="enterprise-sidebar">
+        <div className="sidebar-logo">
+          <div className="sidebar-logo-mark">
+            <Sparkles size={19} />
+          </div>
+          <div>
+            <strong>EnterpriseOS</strong>
+            <span>Agent 管理平台</span>
+          </div>
+        </div>
+        <nav className="sidebar-nav" aria-label="主导航">
+          {['核心业务', '业务流程', '组织学习', '管理'].map((group) => {
+            const groupItems = navItems.filter((item) => item.group === group);
+            if (!groupItems.length) return null;
+            return (
+              <div className="sidebar-nav-group" key={group}>
+                <p>{group}</p>
+                {groupItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button className={visiblePage === item.id ? 'active' : ''} key={item.id} onClick={() => setPage(item.id)}>
+                      <Icon size={17} />
+                      <span>{item.label}</span>
+                      {item.badge > 0 && <em>{item.badge}</em>}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </nav>
+        <div className="sidebar-user-card">
+          <div className="sidebar-avatar">{auth.user.name.slice(0, 1).toUpperCase()}</div>
+          <div>
+            <strong>{auth.user.name}</strong>
+            <span>{isJamie ? '系统负责人' : '团队成员'}</span>
+          </div>
+          <button onClick={onLogout} aria-label="退出登录">
+            <LogOut size={16} />
+          </button>
+        </div>
+      </aside>
+
+      <section className="enterprise-main">
+        <header className="enterprise-topbar">
+          <div className="topbar-title-block">
+            <span>EnterpriseOS / <b>{pageMeta?.label}</b></span>
+            <h1>{visiblePage === 'dashboard' ? '从线索到客户，再到任务、报价和复盘' : pageMeta?.label}</h1>
+          </div>
+          <div className="topbar-search">
+            <Search size={16} />
+            <input placeholder="搜索线索、客户、任务或报价..." />
+          </div>
+          <div className="topbar-actions">
+            <button aria-label="系统设置">
+              <Settings size={17} />
+            </button>
+            <button aria-label="Agent 状态">
+              <Cpu size={17} />
+              <i />
+            </button>
+          </div>
+        </header>
+        <div className="enterprise-content">
+          <BusinessFlowStrip />
+
+          {visiblePage === 'dashboard' && (
         <BusinessDashboard
           agentFeedback={agentFeedback}
           broadcasts={dashboardBroadcasts}
@@ -1173,7 +1208,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'workspace' && (
+          {visiblePage === 'workspace' && (
         <CoworkerWorkspace
           access={access}
           attachments={attachments}
@@ -1207,7 +1242,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'insight' && permissions.insight === true && (
+          {visiblePage === 'insight' && permissions.insight === true && (
         <InsightAgent
           broadcasted={broadcasted}
           broadcasts={broadcasts}
@@ -1222,7 +1257,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'tasks' && permissions.tasks !== false && (
+          {visiblePage === 'tasks' && permissions.tasks !== false && (
         <TaskBoard
           canManageWorkflow={canManageWorkflow}
           createTask={createTask}
@@ -1235,7 +1270,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'crm' && permissions.customers !== false && (
+          {visiblePage === 'crm' && permissions.customers !== false && (
         <CustomerManager
           canManageWorkflow={canManageWorkflow}
           customers={customers}
@@ -1249,7 +1284,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'quote' && permissions.quote !== false && (
+          {visiblePage === 'quote' && permissions.quote !== false && (
         <QuoteBuilder
           canManageWorkflow={canManageWorkflow}
           quotes={quotes}
@@ -1260,11 +1295,11 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'broadcast' && (
+          {visiblePage === 'broadcast' && (
         <BroadcastCenter broadcasts={broadcasts} createBroadcast={createBroadcast} setPage={setPage} totalUsage={totalUsage} />
       )}
 
-      {visiblePage === 'opportunity' && (
+          {visiblePage === 'opportunity' && (
         <OpportunityBoard
           opportunities={allOpportunities}
           savedIds={savedByUser[workspaceId] ?? []}
@@ -1277,7 +1312,7 @@ function EnterpriseApp({ auth, onLogout }) {
         />
       )}
 
-      {visiblePage === 'commander' && (
+          {visiblePage === 'commander' && (
         <JamieCommander
           accessByUser={accessByUser}
           modelByUser={modelByUser}
@@ -1297,6 +1332,8 @@ function EnterpriseApp({ auth, onLogout }) {
           usageByUser={usageByUser}
         />
       )}
+        </div>
+      </section>
     </main>
   );
 }
@@ -1322,8 +1359,16 @@ function BusinessDashboard({ agentFeedback, broadcasts, customers, isJamie, oppo
   const unreadBroadcasts = broadcasts.slice(0, 4);
   const learningItems = buildLearningDigest({ agentFeedback, systemOutputs, tasks, quotes, customers, savedCards });
   const workPrompts = buildWorkPrompts({ isJamie, tasks, broadcasts, quotes, savedCards, agentFeedback });
+  const openTaskCount = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).length;
+  const quoteCount = quotes.filter((quote) => quote.approval !== '已完成').length;
   return (
     <section className="dashboard-page">
+      <div className="kpi-row">
+        <KpiCard icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} />
+        <KpiCard icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" />
+        <KpiCard icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" />
+        <KpiCard icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" />
+      </div>
       <div className="dashboard-hero">
         <div>
           <p className="eyebrow">Business Workspace</p>
@@ -1403,6 +1448,21 @@ function BusinessDashboard({ agentFeedback, broadcasts, customers, isJamie, oppo
         </DashboardPanel>
       </div>
     </section>
+  );
+}
+
+function KpiCard({ icon: Icon, label, sub, tone, value }) {
+  return (
+    <article className={`kpi-card ${tone}`}>
+      <div className="kpi-icon">
+        <Icon size={20} />
+      </div>
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{sub}</small>
+      </div>
+    </article>
   );
 }
 
