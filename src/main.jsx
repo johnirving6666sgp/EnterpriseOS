@@ -412,6 +412,20 @@ function EnterpriseApp({ auth, onLogout }) {
   const dashboardQuotes = isJamie
     ? quotes
     : quotes.filter((quote) => quote.owner === dashboardOwnerId || (quote.collaborators ?? []).includes(dashboardOwnerId));
+  const agentGrowthByUser = useMemo(
+    () =>
+      buildAgentGrowthMap({
+        agentFeedback,
+        customers,
+        messagesByUser,
+        quotes,
+        savedByUser,
+        systemOutputs,
+        tasks,
+        teammates
+      }),
+    [agentFeedback, customers, messagesByUser, quotes, savedByUser, systemOutputs, tasks]
+  );
   const totalUsage = Object.values(usageByUser).reduce(
     (sum, item) => ({
       calls: sum.calls + item.calls,
@@ -1194,6 +1208,7 @@ function EnterpriseApp({ auth, onLogout }) {
           {visiblePage === 'dashboard' && (
         <BusinessDashboard
           agentFeedback={agentFeedback}
+          agentGrowth={agentGrowthByUser[dashboardOwnerId]}
           broadcasts={dashboardBroadcasts}
           customers={dashboardCustomers}
           isJamie={isJamie}
@@ -1239,6 +1254,7 @@ function EnterpriseApp({ auth, onLogout }) {
           submitAgentFeedback={submitAgentFeedback}
           taskNotice={taskNotice}
           lastWorkflowArtifacts={lastWorkflowArtifacts}
+          agentGrowth={agentGrowthByUser[workspaceId]}
         />
       )}
 
@@ -1330,6 +1346,7 @@ function EnterpriseApp({ auth, onLogout }) {
           totalUsage={totalUsage}
           transfer={transfer}
           usageByUser={usageByUser}
+          agentGrowthByUser={agentGrowthByUser}
         />
       )}
         </div>
@@ -1352,7 +1369,7 @@ function BusinessFlowStrip() {
   );
 }
 
-function BusinessDashboard({ agentFeedback, broadcasts, customers, isJamie, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
+function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, isJamie, opportunities, quotes, savedCards, setPage, startQuickPrompt, systemOutputs, tasks, workspaceName }) {
   const focusLeads = opportunities.slice(0, 3);
   const activeTasks = tasks.filter((task) => !['done', 'closed', 'cancelled'].includes(task.status)).slice(0, 5);
   const activeQuotes = quotes.filter((quote) => quote.approval !== '已完成').slice(0, 3);
@@ -1380,7 +1397,10 @@ function BusinessDashboard({ agentFeedback, broadcasts, customers, isJamie, oppo
             <button onClick={() => startQuickPrompt('我需要准备一个报价方案，请先列出必须确认的参数和报价依据。')}>报价准备</button>
           </div>
         </div>
-        <button className="agent-run-button" onClick={() => setPage('workspace')}>进入我的 Agent 对话</button>
+        <div className="dashboard-hero-side">
+          <AgentGrowthBadge growth={agentGrowth} />
+          <button className="agent-run-button" onClick={() => setPage('workspace')}>进入我的 Agent 对话</button>
+        </div>
       </div>
       <section className="work-prompt-panel">
         <div>
@@ -1451,6 +1471,45 @@ function BusinessDashboard({ agentFeedback, broadcasts, customers, isJamie, oppo
   );
 }
 
+function AgentGrowthBadge({ compact = false, growth }) {
+  if (!growth) return null;
+  return (
+    <div className={`agent-growth-badge ${compact ? 'compact' : ''}`}>
+      <span>{growth.levelName}</span>
+      <strong>{growth.title}</strong>
+      {!compact && (
+        <>
+          <div className="agent-growth-meter">
+            <i style={{ width: `${growth.progress}%` }} />
+          </div>
+          <small>{growth.nextText}</small>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AgentGrowthPanel({ growth }) {
+  if (!growth) return null;
+  return (
+    <section className="agent-growth-panel">
+      <div>
+        <p className="eyebrow">Agent Growth</p>
+        <h3>{growth.agentName} 成长等级</h3>
+      </div>
+      <AgentGrowthBadge growth={growth} />
+      <div className="agent-growth-stats">
+        <span>对话 {growth.stats.messages}</span>
+        <span>反馈 {growth.stats.feedback}</span>
+        <span>任务 {growth.stats.tasks}</span>
+        <span>客户 {growth.stats.customers}</span>
+        <span>报价 {growth.stats.quotes}</span>
+      </div>
+      <p>{growth.coachTip}</p>
+    </section>
+  );
+}
+
 function KpiCard({ icon: Icon, label, sub, tone, value }) {
   return (
     <article className={`kpi-card ${tone}`}>
@@ -1480,6 +1539,7 @@ function DashboardPanel({ action, children, onAction, title }) {
 
 function CoworkerWorkspace({
   access,
+  agentGrowth,
   analyzeSaved,
   addAttachments,
   attachmentLoading,
@@ -1583,11 +1643,13 @@ function CoworkerWorkspace({
         <div className="identity-line">
           <span>👤 {access.ownerName} 的数字空间</span>
           <div className="identity-actions">
+            <AgentGrowthBadge compact growth={agentGrowth} />
             <strong>{coworker.agent}</strong>
             <button className="return-dashboard-button" onClick={() => setPage('dashboard')}>返回业务工作台</button>
             <button onClick={clearConversation} disabled={isThinking}>清空对话</button>
           </div>
         </div>
+        <AgentGrowthPanel growth={agentGrowth} />
         <div
           className="message-stream"
           ref={messageStreamRef}
@@ -2593,6 +2655,7 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
 
 function JamieCommander({
   accessByUser,
+  agentGrowthByUser,
   applyRecommendedRoutes,
   approveRegistration,
   modelByUser,
@@ -2632,6 +2695,7 @@ function JamieCommander({
         <div className="command-table">
           <div className="table-head">同事/助理</div>
           <div className="table-head">权限状态</div>
+          <div className="table-head">成长等级</div>
           <div className="table-head">模型路由</div>
           <div className="table-head">今日 Token 成本</div>
           <div className="table-head">专家贡献</div>
@@ -2639,6 +2703,7 @@ function JamieCommander({
           {teammates.map((item, index) => {
             const usage = usageByUser[item.id] ?? { cost: 0 };
             const access = accessByUser[item.id] ?? { active: true, ownerName: item.name };
+            const growth = agentGrowthByUser[item.id];
             return (
               <React.Fragment key={item.id}>
                 <div>
@@ -2646,6 +2711,10 @@ function JamieCommander({
                   <small>{access.ownerName}</small>
                 </div>
                 <div>{item.id === 'jamie' ? '👑 试用负责人' : access.active ? '🟢 活跃中' : '🔴 已中止'}</div>
+                <div>
+                  <AgentGrowthBadge compact growth={growth} />
+                  <small>{growth?.coachTip}</small>
+                </div>
                 <div>
                   <div className="route-stack">
                     <select value={modelByUser[item.id]} onChange={(event) => setModel(item.id, event.target.value)}>
@@ -2931,6 +3000,97 @@ function buildLearningDigest({ agentFeedback = [], systemOutputs = {}, tasks = [
       text: savedCards.length ? `你已收藏 ${savedCards.length} 条线索，可继续带回对话分析。` : '收藏外部线索后，会自动进入个人助理和业务流程。'
     }
   ];
+}
+
+const agentGrowthLevels = [
+  { level: 1, title: '初级', min: 0 },
+  { level: 2, title: '半星', min: 12 },
+  { level: 3, title: '一星', min: 28 },
+  { level: 4, title: '一星半', min: 48 },
+  { level: 5, title: '二星', min: 74 },
+  { level: 6, title: '二星半', min: 106 },
+  { level: 7, title: '三星', min: 144 },
+  { level: 8, title: '三星半', min: 188 },
+  { level: 9, title: '四星', min: 238 },
+  { level: 10, title: '五星', min: 300 }
+];
+
+function buildAgentGrowthMap({ agentFeedback = [], customers = [], messagesByUser = {}, quotes = [], savedByUser = {}, systemOutputs = {}, tasks = [], teammates = [] }) {
+  return Object.fromEntries(
+    teammates.map((teammate) => {
+      const id = teammate.id;
+      const messages = messagesByUser[id] ?? [];
+      const userMessages = messages.filter((message) => message.from === 'user').length;
+      const uploads = messages.filter((message) => String(message.text).includes('[上传附件]')).length;
+      const feedback = agentFeedback.filter((item) => item.agentId === id || item.createdBy === id);
+      const useful = feedback.filter((item) => item.rating === 'useful').length;
+      const improvements = feedback.filter((item) => item.rating && item.rating !== 'useful').length;
+      const ownedTasks = tasks.filter((task) => task.owner === id || (task.collaborators ?? []).includes(id));
+      const completedTasks = ownedTasks.filter((task) => ['done', 'closed'].includes(task.status)).length;
+      const ownedCustomers = customers.filter((customer) => customer.owner === id || (customer.collaborators ?? []).includes(id));
+      const ownedQuotes = quotes.filter((quote) => quote.owner === id || (quote.collaborators ?? []).includes(id));
+      const saved = savedByUser[id]?.length ?? 0;
+      const knowledge = (systemOutputs.internal ?? []).filter((item) => String(item.source ?? '').toLowerCase().includes(id)).length;
+      const score = Math.round(
+        userMessages * 5 +
+          uploads * 10 +
+          useful * 12 +
+          improvements * 10 +
+          ownedTasks.length * 8 +
+          completedTasks * 10 +
+          ownedCustomers.length * 12 +
+          ownedQuotes.length * 14 +
+          saved * 10 +
+          knowledge * 14
+      );
+      return [
+        id,
+        buildAgentGrowth({
+          agentName: teammate.agent,
+          score,
+          stats: {
+            messages: userMessages,
+            uploads,
+            feedback: feedback.length,
+            tasks: ownedTasks.length,
+            completedTasks,
+            customers: ownedCustomers.length,
+            quotes: ownedQuotes.length,
+            saved,
+            knowledge
+          }
+        })
+      ];
+    })
+  );
+}
+
+function buildAgentGrowth({ agentName, score, stats }) {
+  const current = [...agentGrowthLevels].reverse().find((item) => score >= item.min) ?? agentGrowthLevels[0];
+  const next = agentGrowthLevels.find((item) => item.level === current.level + 1);
+  const currentMin = current.min;
+  const nextMin = next?.min ?? current.min;
+  const progress = next ? Math.max(8, Math.min(100, Math.round(((score - currentMin) / (nextMin - currentMin)) * 100))) : 100;
+  return {
+    agentName,
+    level: current.level,
+    title: current.title,
+    levelName: `Lv${current.level} · ${current.title}`,
+    score,
+    progress,
+    stats,
+    nextText: next ? `距离 ${next.title} 还差 ${Math.max(0, next.min - score)} 成长值` : '已达到最高五星等级',
+    coachTip: buildAgentGrowthTip(current.level, stats)
+  };
+}
+
+function buildAgentGrowthTip(level, stats) {
+  if (level <= 2) return '先多输入真实客户问题、会议纪要或现场资料，让助理形成基础记忆。';
+  if (level <= 4) return '继续对回复点“有用/不准/需更具体”，并把对话转成任务。';
+  if (level <= 6) return '开始把客户阶段、商机收藏和报价参数带回对话，让助理理解业务闭环。';
+  if (level <= 8) return '多沉淀任务结果和报价经验，训练助理主动发现风险和下一步动作。';
+  if ((stats.knowledge ?? 0) < 3) return '继续把可复用经验沉淀为知识资产，冲刺专家型助理。';
+  return '已经接近专家型助理，重点训练主动提醒、复盘和跨 Agent 协作。';
 }
 
 function buildWorkPrompts({ agentFeedback = [], broadcasts = [], isJamie, quotes = [], savedCards = [], tasks = [] }) {
