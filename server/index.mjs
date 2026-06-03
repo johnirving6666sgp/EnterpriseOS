@@ -21,6 +21,8 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 30000);
+const OPENROUTER_RETRY_COUNT = Number(process.env.OPENROUTER_RETRY_COUNT || 1);
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
 const fixedSystemAgentIds = ['external', 'customer', 'task', 'quote', 'internal'];
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
@@ -1007,6 +1009,73 @@ app.post('/api/llm/proxy', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/model-health', requireAuth, requireJamie, async (req, res) => {
+  const store = await readStore();
+  const live = req.query.live === '1';
+  const routes = collectModelRoutes(store);
+  const uniqueModels = [...new Set(routes.map((route) => route.normalizedModel))];
+  const modelChecks = {};
+
+  if (!OPENROUTER_API_KEY) {
+    for (const model of uniqueModels) {
+      modelChecks[model] = {
+        ok: false,
+        liveChecked: false,
+        reason: 'missing_openrouter_key',
+        message: 'OPENROUTER_API_KEY 未配置，无法进行真模型连通性检查。'
+      };
+    }
+  } else if (live) {
+    for (const model of uniqueModels) {
+      const startedAt = Date.now();
+      try {
+        const result = await callOpenRouter({
+          model,
+          messages: [
+            { role: 'system', content: '你是 EnterpriseOS 的模型连通性检测器。' },
+            { role: 'user', content: '请只回复 OK。' }
+          ],
+          temperature: 0,
+          maxTokens: 8
+        });
+        modelChecks[model] = {
+          ok: true,
+          liveChecked: true,
+          latencyMs: Date.now() - startedAt,
+          resolvedModel: result.model
+        };
+      } catch (error) {
+        modelChecks[model] = {
+          ok: false,
+          liveChecked: true,
+          latencyMs: Date.now() - startedAt,
+          error: error.message
+        };
+      }
+    }
+  } else {
+    for (const model of uniqueModels) {
+      modelChecks[model] = {
+        ok: true,
+        liveChecked: false,
+        message: '路由格式已检查；加 ?live=1 可进行真模型请求测试。'
+      };
+    }
+  }
+
+  res.json({
+    openRouterConfigured: Boolean(OPENROUTER_API_KEY),
+    live,
+    timeoutMs: OPENROUTER_TIMEOUT_MS,
+    retryCount: OPENROUTER_RETRY_COUNT,
+    routes: routes.map((route) => ({
+      ...route,
+      health: modelChecks[route.normalizedModel]
+    })),
+    models: modelChecks
+  });
+});
+
 app.post('/api/obsidian/sync', requireAuth, requireJamie, async (_req, res) => {
   const store = await readStore();
   await writeObsidian(store);
@@ -1158,7 +1227,7 @@ function mergeUsage(previous = emptyUsage(), next) {
 }
 
 function toOpenRouterModel(apiModel = '') {
-  const clean = String(apiModel).replace(/^openrouter\//, '');
+  const clean = String(apiModel).replace(/^(openrouter\/)+/, '');
   const modelMap = {
     'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
     'claude-3-7-sonnet': 'anthropic/claude-3.7-sonnet',
@@ -1171,6 +1240,30 @@ function toOpenRouterModel(apiModel = '') {
     'gpt-5.2': 'openai/gpt-5.2'
   };
   return modelMap[clean] ?? clean ?? 'anthropic/claude-3.5-haiku';
+}
+
+function collectModelRoutes(store) {
+  const personal = Object.values(store.agents ?? {}).map((agent) => ({
+    type: 'personal',
+    id: agent.id,
+    name: agent.name,
+    ownerId: agent.ownerId,
+    active: agent.active !== false,
+    provider: agent.provider || 'claude',
+    apiModel: agent.apiModel || 'claude-3-5-haiku',
+    normalizedModel: toOpenRouterModel(agent.apiModel || 'claude-3-5-haiku')
+  }));
+  const system = Object.entries(store.systemAgents ?? {}).map(([id, agent]) => ({
+    type: 'system',
+    id,
+    name: agent.name || id,
+    ownerId: agent.ownerId || 'jamie',
+    active: true,
+    provider: agent.provider || 'openrouter',
+    apiModel: agent.apiModel || 'openrouter/openai/gpt-4.1-mini',
+    normalizedModel: toOpenRouterModel(agent.apiModel || 'openrouter/openai/gpt-4.1-mini')
+  }));
+  return [...personal, ...system];
 }
 
 function llmUnavailable(reason = 'missing_openrouter_key') {
@@ -1245,28 +1338,48 @@ function getPersonalAgentRoleInstruction(userId) {
 }
 
 async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 900 }) {
-  const response = await fetch(OPENROUTER_BASE_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': OPENROUTER_SITE_URL,
-      'X-Title': OPENROUTER_APP_NAME
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens
-    })
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error?.message || payload.message || `OpenRouter HTTP ${response.status}`);
+  const attempts = Math.max(1, OPENROUTER_RETRY_COUNT + 1);
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
+    try {
+      const response = await fetch(OPENROUTER_BASE_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': OPENROUTER_SITE_URL,
+          'X-Title': OPENROUTER_APP_NAME
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          max_tokens: maxTokens
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error?.message || payload.message || `OpenRouter HTTP ${response.status}`);
+      }
+      const reply = payload.choices?.[0]?.message?.content?.trim();
+      if (!reply) throw new Error('OpenRouter returned an empty reply');
+      return { reply, model: payload.model ?? model };
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      await sleep(400 * attempt);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-  const reply = payload.choices?.[0]?.message?.content?.trim();
-  if (!reply) throw new Error('OpenRouter returned an empty reply');
-  return { reply, model: payload.model ?? model };
+  throw new Error(lastError?.name === 'AbortError' ? `OpenRouter timeout after ${OPENROUTER_TIMEOUT_MS}ms` : lastError?.message || 'OpenRouter request failed');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function fallbackAgentReply({ agent, user, message }) {
