@@ -980,7 +980,7 @@ function EnterpriseApp({ auth, onLogout }) {
           ...current,
           [id]: {
             status: 'success',
-            text: describeSystemRunResult(id, payload.output, payload.createdTasks)
+            text: describeSystemRunResult(id, payload.output, payload.createdTasks, payload.llm)
           }
         }));
       })
@@ -2621,6 +2621,7 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
               <p className="tender-meta-line">
                 {card.type || '公告类型待确认'} · {card.region || '地区待确认'} · 信息完整度 {card.infoCompleteness || 0}%
               </p>
+              {card.detailRef && <p className="action-note">来源详情编号：{card.detailRef}</p>}
               {card.missingFields?.length > 0 && <p className="action-note">还需补齐：{card.missingFields.join('、')}</p>}
               <div className="opportunity-score">
                 <strong>{opportunityScore(card)}</strong>
@@ -2919,17 +2920,21 @@ function getSystemAgentDisplayName(id) {
   return systemAgents.find((agent) => agent.id === id)?.name ?? '系统 Agent';
 }
 
-function describeSystemRunResult(id, output, createdTasks = []) {
+function describeSystemRunResult(id, output, createdTasks = [], llm = {}) {
+  const modelStatus = llm?.simulated
+    ? `当前为本地降级模式：${llm.message || 'OPENROUTER_API_KEY 未配置或模型调用失败'}`
+    : `已调用真模型：${llm.model || llm.apiModel || llm.provider || 'OpenRouter'}`;
   if (id === 'external') {
     const title = output?.opportunity?.title || output?.title || '外部线索';
     const source = output?.opportunity?.source || '外部来源';
-    return `外部机会 Agent 已完成扫描：${title}（${source}）。${createdTasks?.length ? `并生成 ${createdTasks.length} 个跟进任务。` : '如果没有看到新卡片，说明本次结果与已有线索相近或暂无更高价值新线索。'}`;
+    const completeness = output?.opportunity?.infoCompleteness ? `信息完整度 ${output.opportunity.infoCompleteness}%。` : '';
+    return `外部机会 Agent 已完成扫描：${title}（${source}）。${completeness}${createdTasks?.length ? `并生成 ${createdTasks.length} 个跟进任务。` : '如果没有看到新卡片，说明本次结果与已有线索相近或暂无更高价值新线索。'} ${modelStatus}`;
   }
-  if (id === 'task') return `任务 Agent 已完成：生成/更新 ${createdTasks?.length ?? 0} 个任务。`;
-  if (id === 'quote') return `报价 Agent 已完成：${output?.quote?.customer || output?.title || '已生成报价建议'}。`;
-  if (id === 'customer') return `客户管理 Agent 已完成：${output?.customers?.length ?? 0} 条客户建议。`;
-  if (id === 'internal') return `内部信息 Agent 已完成：${output?.title || '已生成学习洞察'}。`;
-  return `${getSystemAgentDisplayName(id)} 已完成运行。`;
+  if (id === 'task') return `任务 Agent 已完成：生成/更新 ${createdTasks?.length ?? 0} 个任务。${modelStatus}`;
+  if (id === 'quote') return `报价 Agent 已完成：${output?.quote?.customer || output?.title || '已生成报价建议'}。${modelStatus}`;
+  if (id === 'customer') return `客户管理 Agent 已完成：${output?.customers?.length ?? 0} 条客户建议。${modelStatus}`;
+  if (id === 'internal') return `内部信息 Agent 已完成：${output?.title || '已生成学习洞察'}。${modelStatus}`;
+  return `${getSystemAgentDisplayName(id)} 已完成运行。${modelStatus}`;
 }
 
 function priorityLabel(priority) {

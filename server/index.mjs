@@ -1161,20 +1161,35 @@ function toOpenRouterModel(apiModel = '') {
   const clean = String(apiModel).replace(/^openrouter\//, '');
   const modelMap = {
     'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
-    'claude-3-7-sonnet': 'openai/gpt-4.1-mini',
+    'claude-3-7-sonnet': 'anthropic/claude-3.7-sonnet',
+    'claude-sonnet-4': 'anthropic/claude-sonnet-4',
     'claude-opus-4': 'anthropic/claude-opus-4',
+    'claude-opus-4.1': 'anthropic/claude-opus-4.1',
     'gpt-4.1-mini': 'openai/gpt-4.1-mini',
     'gpt-4.1': 'openai/gpt-4.1',
+    'gpt-4o-mini': 'openai/gpt-4o-mini',
     'gpt-5.2': 'openai/gpt-5.2'
   };
   return modelMap[clean] ?? clean ?? 'anthropic/claude-3.5-haiku';
+}
+
+function llmUnavailable(reason = 'missing_openrouter_key') {
+  return {
+    provider: 'fallback',
+    simulated: true,
+    reason,
+    message:
+      reason === 'missing_openrouter_key'
+        ? 'OPENROUTER_API_KEY 未配置，当前使用本地降级逻辑，不是真模型分析。'
+        : '模型调用失败，当前使用本地降级逻辑。'
+  };
 }
 
 async function generateAgentReply({ store, agent, user, message }) {
   if (!OPENROUTER_API_KEY) {
     return {
       reply: fallbackAgentReply({ agent, user, message }),
-      llm: { provider: 'fallback', simulated: true, reason: 'missing_openrouter_key' }
+      llm: llmUnavailable()
     };
   }
 
@@ -1212,7 +1227,7 @@ async function generateAgentReply({ store, agent, user, message }) {
   } catch (error) {
     return {
       reply: `${fallbackAgentReply({ agent, user, message })}\n\n（OpenRouter 调用失败，已使用本地降级回复：${error.message}）`,
-      llm: { provider: 'fallback', model, simulated: true, error: error.message }
+      llm: { ...llmUnavailable('openrouter_error'), model, error: error.message }
     };
   }
 }
@@ -1318,7 +1333,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
   if (!OPENROUTER_API_KEY) {
     return {
       output: fallbackSystemAgentOutput(id, '', tenderSignals),
-      llm: { provider: 'fallback', simulated: true, reason: 'missing_openrouter_key' }
+      llm: llmUnavailable()
     };
   }
 
@@ -1351,7 +1366,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
   } catch (error) {
     return {
       output: fallbackSystemAgentOutput(id, error.message, tenderSignals),
-      llm: { provider: 'fallback', model, simulated: true, error: error.message }
+      llm: { ...llmUnavailable('openrouter_error'), model, error: error.message }
     };
   }
 }
@@ -1500,6 +1515,7 @@ function normalizeSystemAgentOutput(id, data, raw, tenderSignals = []) {
       projectName: data.projectName || tender?.projectName || tender?.title || '',
       tenderInfo: data.tenderInfo || tender?.tenderInfo || '',
       rawSnippet: data.rawSnippet || tender?.rawSnippet || '',
+      detailRef: data.detailRef || tender?.detailRef || '',
       infoCompleteness: data.infoCompleteness || tender?.infoCompleteness || 0,
       missingFields: data.missingFields || tender?.missingFields || [],
       quality: data.quality || tender?.quality || evaluateTextOpportunity(`${data.title || tender?.title || ''} ${data.why || tender?.why || ''}`),
@@ -1605,6 +1621,17 @@ function pickTenderSignal(data, tenderSignals = []) {
   return tenderSignals.find((item) => dataTitle && item.title.includes(dataTitle.slice(0, 10))) ?? tenderSignals[0];
 }
 
+function chooseBestTenderSignal(tenderSignals = []) {
+  return [...tenderSignals].sort((a, b) => {
+    if (a.manual !== b.manual) return a.manual ? 1 : -1;
+    const completenessDelta = Number(b.infoCompleteness || 0) - Number(a.infoCompleteness || 0);
+    if (completenessDelta) return completenessDelta;
+    const scoreDelta = Number(b.quality?.total || b.score || 0) - Number(a.quality?.total || a.score || 0);
+    if (scoreDelta) return scoreDelta;
+    return String(b.date || '').localeCompare(String(a.date || ''));
+  })[0] || null;
+}
+
 function findOpportunityById(store, id) {
   return (store.generatedOpportunities ?? []).find((item) => item.id === id) || null;
 }
@@ -1629,6 +1656,7 @@ function normalizeSavedOpportunity(opportunity, fallbackId) {
     projectName: opportunity.projectName || opportunity.title || '',
     tenderInfo: opportunity.tenderInfo || '',
     rawSnippet: opportunity.rawSnippet || '',
+    detailRef: opportunity.detailRef || '',
     infoCompleteness: opportunity.infoCompleteness || 0,
     missingFields: opportunity.missingFields || [],
     url: opportunity.url || '',
@@ -2353,7 +2381,7 @@ function fallbackSystemAgentOutput(id, detail = '', tenderSignals = []) {
     );
   }
   if (id === 'external') {
-    const tender = tenderSignals[0];
+    const tender = chooseBestTenderSignal(tenderSignals);
     return normalizeSystemAgentOutput(
       'external',
       {

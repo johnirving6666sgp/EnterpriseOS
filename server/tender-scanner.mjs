@@ -181,7 +181,7 @@ const adapters = {
     } catch {
       // Public GET shapes below are a fallback when POST is blocked.
     }
-    if (rows.length) return rows;
+    if (rows.length) return enrichRowsWithDetails(rows, source);
 
     const urls = [
       `${source.baseUrl}?keywords=${encodeURIComponent(keyword)}`,
@@ -191,7 +191,7 @@ const adapters = {
     for (const url of urls) {
       const html = await fetchText(url);
       const parsed = parseQianlimaRows(html, keyword, source, url);
-      if (parsed.length) return parsed;
+      if (parsed.length) return enrichRowsWithDetails(parsed, source);
     }
     return [];
   },
@@ -201,7 +201,7 @@ const adapters = {
     try {
       const html = await fetchText(url);
       const rows = parseCtbpspRows(html, keyword, source, url);
-      if (rows.length) return rows;
+      if (rows.length) return enrichRowsWithDetails(rows, source);
     } catch (error) {
       if (!includeManual) throw error;
     }
@@ -244,7 +244,9 @@ function parseQianlimaRows(html, keyword, source, sourceUrl) {
     const title = cleanTitle(rawTitle);
     if (!isRelevant(title)) continue;
     const snippet = getNearbyText(text, match.index, match[0].length);
-    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type, region, date, url: sourceUrl, snippet }));
+    const detailRef = extractNearbyDetailRef(html, title);
+    const detailUrl = absoluteUrl(extractNearbyHref(html, title), sourceUrl);
+    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type, region, date, url: detailUrl || sourceUrl, detailRef, snippet }));
   }
   return rows.length ? rows : parseLooseRows(text, keyword, source, sourceUrl);
 }
@@ -260,6 +262,8 @@ function parseQianlimaTableRows(html, keyword, source, sourceUrl) {
     const date = normalizeDate(rawDate);
     const title = cleanTitle(titleParts.join(' '));
     if (!date || !title || !isRelevant(title)) continue;
+    const detailRef = extractDetailRef(trMatch[1]);
+    const detailUrl = absoluteUrl(extractHref(trMatch[1]), sourceUrl);
     rows.push(
       toOpportunity({
         title,
@@ -269,7 +273,8 @@ function parseQianlimaTableRows(html, keyword, source, sourceUrl) {
         type: cleanTitle(type) || guessTenderType(title),
         region: cleanTitle(region) || '待确认',
         date,
-        url: sourceUrl,
+        url: detailUrl || sourceUrl,
+        detailRef,
         snippet: cells.join(' ')
       })
     );
@@ -317,6 +322,116 @@ function parseLooseRows(text, keyword, source, sourceUrl) {
   return dedupe(rows).slice(0, 30);
 }
 
+async function enrichRowsWithDetails(rows, source) {
+  const enriched = [];
+  for (const row of rows.slice(0, 20)) {
+    enriched.push(await enrichRowWithDetail(row, source));
+  }
+  return [...enriched, ...rows.slice(20)];
+}
+
+async function enrichRowWithDetail(row, source) {
+  if (!row?.url || !isDetailUrl(row.url, source)) return row;
+  try {
+    const html = await fetchText(row.url, {}, 10000);
+    const detailText = cleanTenderText(decodeHtml(html));
+    if (detailText.length < 80) return row;
+    return refreshTenderOpportunity(row, detailText);
+  } catch {
+    return row;
+  }
+}
+
+function refreshTenderOpportunity(row, detailText) {
+  const snippet = [row.rawSnippet, detailText].filter(Boolean).join(' ');
+  const tender = enrichTenderFields({
+    title: row.title,
+    keyword: row.keyword,
+    type: row.type,
+    region: row.region,
+    date: row.date,
+    url: row.url,
+    snippet,
+    manual: row.manual
+  });
+  const quality = evaluateOpportunityQuality({
+    title: row.title,
+    keyword: row.keyword,
+    type: row.type,
+    date: row.date,
+    manual: row.manual,
+    score: row.score,
+    tender
+  });
+  const unitLabel = tender.procurementUnit || tender.tenderUnit || tender.buyer || '招标/采购单位待核验';
+  const missing = tender.missingFields.length ? `仍缺：${tender.missingFields.join('、')}。` : '关键招标信息已基本齐全。';
+  return {
+    ...row,
+    projectName: tender.projectName,
+    procurementUnit: tender.procurementUnit,
+    tenderUnit: tender.tenderUnit,
+    buyer: tender.buyer,
+    agency: tender.agency,
+    budget: tender.budget,
+    deadline: tender.deadline,
+    contact: tender.contact,
+    contactPhone: tender.contactPhone,
+    tenderInfo: tender.tenderInfo,
+    rawSnippet: tender.rawSnippet,
+    infoCompleteness: tender.infoCompleteness,
+    missingFields: tender.missingFields,
+    quality,
+    recommendation: quality.recommendation,
+    why: `命中“${row.keyword}”及公司关注方向；当前识别单位：${unitLabel}。${missing}`,
+    action: `先核验 ${unitLabel} 的真实需求、预算、截止时间和联系方式，再交给客户管理/任务/报价 Agent 拆解跟进。`
+  };
+}
+
+function isDetailUrl(url = '', source = {}) {
+  if (!url || !source?.baseUrl) return false;
+  if (url === source.baseUrl) return false;
+  if (/zbpglist|bulletinList/i.test(url)) return false;
+  return /^https?:\/\//i.test(url);
+}
+
+function extractHref(html = '') {
+  const candidates = [...String(html).matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi)]
+    .map((match) => match[1])
+    .filter((href) => href && !/^javascript:|^#$/i.test(href));
+  return candidates.find((href) => !/zbpglist|bulletinList/i.test(href)) || candidates[0] || '';
+}
+
+function extractNearbyHref(html = '', title = '') {
+  const clean = cleanTitle(title).slice(0, 24);
+  if (!clean) return '';
+  const index = String(html).indexOf(clean);
+  if (index === -1) return '';
+  return extractHref(String(html).slice(Math.max(0, index - 800), index + 1200));
+}
+
+function extractDetailRef(html = '') {
+  const match = String(html).match(/popUpQRcodeImg\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\)/);
+  if (!match) return '';
+  return `qianlima-content:${match[1]};next:${match[2]}`;
+}
+
+function extractNearbyDetailRef(html = '', title = '') {
+  const clean = cleanTitle(title).slice(0, 24);
+  if (!clean) return '';
+  const index = String(html).indexOf(clean);
+  if (index === -1) return '';
+  return extractDetailRef(String(html).slice(Math.max(0, index - 800), index + 1200));
+}
+
+function absoluteUrl(href = '', baseUrl = '') {
+  if (!href) return '';
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return href;
+  }
+}
+
 function manualOpportunity({ source, keyword, today, reason }) {
   return toOpportunity({
     title: `打开${source.name}验证：${keyword} 最新公告`,
@@ -333,7 +448,7 @@ function manualOpportunity({ source, keyword, today, reason }) {
   });
 }
 
-function toOpportunity({ title, platform, sourceId, keyword, type, region, date, url, manual = false, manualReason = '', snippet = '' }) {
+function toOpportunity({ title, platform, sourceId, keyword, type, region, date, url, detailRef = '', manual = false, manualReason = '', snippet = '' }) {
   const tender = enrichTenderFields({ title, keyword, type, region, date, url, snippet, manual });
   const score = scoreOpportunity(title, keyword, manual);
   const quality = evaluateOpportunityQuality({ title, keyword, type, date, manual, score, tender });
@@ -351,6 +466,7 @@ function toOpportunity({ title, platform, sourceId, keyword, type, region, date,
     region,
     type,
     url,
+    detailRef,
     projectName: tender.projectName,
     procurementUnit: tender.procurementUnit,
     tenderUnit: tender.tenderUnit,
@@ -433,10 +549,12 @@ function enrichTenderFields({ title, type, region, date, url, snippet = '', manu
 
 function inferUnit(text, labels) {
   for (const label of labels) {
-    const pattern = new RegExp(`${label}\\s*[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9（）()·\\-]{3,70})`);
+    const pattern = new RegExp(`${label}\\s*[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9（）()·\\-\\s]{3,90})`);
     const match = text.match(pattern);
     if (match?.[1]) return cleanUnit(match[1]);
   }
+  const natural = text.match(/(?:受|接受|委托)([\u4e00-\u9fa5A-Za-z0-9（）()·\-]{3,70}?)(?:委托|的委托|采购|招标)/)?.[1];
+  if (natural) return cleanUnit(natural);
   return '';
 }
 
@@ -446,7 +564,7 @@ function inferTitleUnit(title = '') {
   if (bracket) return cleanUnit(bracket);
   const patterns = [
     /([\u4e00-\u9fa5A-Za-z0-9（）()·-]{2,42}?(?:有限公司|集团有限公司|股份有限公司|集团|研究院|研究所|大学|学院|实验室|中心|医院|公司|厂|院|所))(?=.*(?:采购|招标|询价|项目|熔炼|设备|材料))/,
-    /^([\u4e00-\u9fa5A-Za-z0-9（）()·-]{2,24}?(?:厂|公司|研究院|研究所|大学|学院|实验室|中心))\s*(?:熔炼|真空|冷坩埚|高温|高熵|靶材|金属|新材料)/
+    /^([\u4e00-\u9fa5A-Za-z0-9（）()·-]{2,24}?(?:厂|公司|研究院|研究所|大学|学院|实验室|中心|工区|事业部))\s*(?:熔炼|真空|冷坩埚|高温|高熵|靶材|金属|新材料|项修|维修)/
   ];
   for (const pattern of patterns) {
     const match = clean.match(pattern);
@@ -472,21 +590,21 @@ function inferProjectName(title = '', text = '') {
 
 function inferBudget(text = '') {
   const patterns = [
-    /(?:预算金额|项目预算|采购预算|最高限价|控制价|招标控制价)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?\s*(?:万元|元|人民币|万))/,
-    /([0-9]+(?:\.[0-9]+)?\s*万元)(?=.{0,12}(?:预算|限价|控制价|资金|报价))/,
-    /(?:预算|限价|控制价|资金).{0,12}?([0-9]+(?:\.[0-9]+)?\s*万元)/
+    /(?:预算金额|项目预算|采购预算|最高限价|控制价|招标控制价|预算价|限价金额|最高投标限价|项目总投资)\s*[:：]?\s*(?:人民币)?\s*([0-9,]+(?:\.[0-9]+)?\s*(?:万元|元|人民币|万|亿元))/,
+    /([0-9,]+(?:\.[0-9]+)?\s*(?:万元|亿元|元))(?=.{0,18}(?:预算|限价|控制价|资金|报价|投资))/,
+    /(?:预算|限价|控制价|资金|投资).{0,18}?([0-9,]+(?:\.[0-9]+)?\s*(?:万元|亿元|元))/
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1].replace(/\s+/g, '');
+    if (match?.[1]) return match[1].replace(/[,\s]+/g, '');
   }
   return '';
 }
 
 function inferDeadline(text = '') {
   const patterns = [
-    /(?:投标截止时间|响应文件提交截止时间|报名截止时间|开标时间|截止时间)\s*[:：]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)/,
-    /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)(?=.{0,18}(?:截止|开标|报名))/
+    /(?:投标截止时间|响应文件提交截止时间|报名截止时间|开标时间|截止时间|递交截止时间|获取时间|报名时间)\s*[:：]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)/,
+    /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)(?=.{0,24}(?:截止|开标|报名|递交|获取))/
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -496,10 +614,10 @@ function inferDeadline(text = '') {
 }
 
 function inferContact(text = '') {
-  const name = text.match(/(?:联系人|项目联系人|采购联系人)\s*[:：]?\s*([\u4e00-\u9fa5]{2,4})/)?.[1] || '';
+  const name = text.match(/(?:联系人|项目联系人|采购联系人|招标联系人|采购人联系方式)\s*[:：]?\s*([\u4e00-\u9fa5]{2,6})/)?.[1] || '';
   const phone =
-    text.match(/(?:电话|联系方式|联系电话)\s*[:：]?\s*((?:1[3-9]\d{9})|(?:0\d{2,3}[-\s]?\d{7,8})(?:-\d{1,4})?)/)?.[1] ||
-    text.match(/(?:1[3-9]\d{9})|(?:0\d{2,3}[-\s]?\d{7,8})(?:-\d{1,4})?/)?.[0] ||
+    text.match(/(?:电话|联系方式|联系电话|电 话|手机)\s*[:：]?\s*((?:1[3-9]\d{9})|(?:0\d{2,3}[-\s]\d{7,8})(?:-\d{1,4})?)/)?.[1] ||
+    text.match(/(?:1[3-9]\d{9})|(?:0\d{2,3}[-\s]\d{7,8})(?:-\d{1,4})?/)?.[0] ||
     '';
   return { name, phone };
 }
@@ -645,6 +763,10 @@ function dedupe(items) {
 function sortOpportunities(a, b) {
   if (a.manual !== b.manual) return a.manual ? 1 : -1;
   if (a.date !== b.date) return String(b.date || '').localeCompare(String(a.date || ''));
+  const completenessDelta = Number(b.infoCompleteness || 0) - Number(a.infoCompleteness || 0);
+  if (completenessDelta) return completenessDelta;
+  const qualityDelta = Number(b.quality?.total || 0) - Number(a.quality?.total || 0);
+  if (qualityDelta) return qualityDelta;
   return b.score - a.score;
 }
 
