@@ -1390,10 +1390,10 @@ function BusinessDashboard({ agentFeedback, agentGrowth, broadcasts, customers, 
   return (
     <section className="dashboard-page">
       <div className="kpi-row">
-        <KpiCard icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} />
-        <KpiCard icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" />
-        <KpiCard icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" />
-        <KpiCard icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" />
+        <KpiCard icon={Newspaper} tone="green" label="重点线索" value={opportunities.length} sub={`${savedCards.length} 条已收藏`} onClick={() => setPage('opportunity')} />
+        <KpiCard icon={Users} tone="blue" label="我的客户" value={customers.length} sub="按阶段推进" onClick={() => setPage('crm')} />
+        <KpiCard icon={ClipboardList} tone="orange" label="待办任务" value={openTaskCount} sub="需要跟进或反馈" onClick={() => setPage('tasks')} />
+        <KpiCard icon={CircleDollarSign} tone="purple" label="待处理报价" value={quoteCount} sub="补齐依据后提交" onClick={() => setPage('quote')} />
       </div>
       <div className="dashboard-hero">
         <div>
@@ -1523,9 +1523,9 @@ function AgentGrowthPanel({ growth }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, sub, tone, value }) {
+function KpiCard({ icon: Icon, label, onClick, sub, tone, value }) {
   return (
-    <article className={`kpi-card ${tone}`}>
+    <button type="button" className={`kpi-card ${tone}`} onClick={onClick} aria-label={`打开${label}`}>
       <div className="kpi-icon">
         <Icon size={20} />
       </div>
@@ -1534,7 +1534,7 @@ function KpiCard({ icon: Icon, label, sub, tone, value }) {
         <strong>{value}</strong>
         <small>{sub}</small>
       </div>
-    </article>
+    </button>
   );
 }
 
