@@ -100,6 +100,11 @@ function renderMarkdown({ generatedAt, keywords: terms, opportunities, warnings,
     lines.push(`### ${item.isNew ? '新发现：' : ''}${item.title}`);
     lines.push('');
     lines.push(`- 来源：${item.source}`);
+    lines.push(`- 招标/采购单位：${item.procurementUnit || item.tenderUnit || item.buyer || '待核验'}`);
+    lines.push(`- 预算/限价：${item.budget || '待核验'}`);
+    lines.push(`- 截止/开标：${item.deadline || '待核验'}`);
+    lines.push(`- 联系人：${[item.contact, item.contactPhone].filter(Boolean).join(' ') || '待核验'}`);
+    lines.push(`- 信息完整度：${item.infoCompleteness || 0}%${item.missingFields?.length ? `；还缺 ${item.missingFields.join('、')}` : ''}`);
     lines.push(`- 关键词：${item.keyword}`);
     lines.push(`- 日期：${item.date || '待确认'}`);
     lines.push(`- 匹配：${item.match}`);

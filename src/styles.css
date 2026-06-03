@@ -1873,6 +1873,42 @@ select {
   text-align: center;
 }
 
+.tender-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tender-detail-grid span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d7e8df;
+  border-radius: 8px;
+  background: #f8fffb;
+}
+
+.tender-detail-grid em {
+  color: #667085;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.tender-detail-grid strong {
+  color: #101828;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.tender-meta-line {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .activity-row {
   display: grid;
   grid-template-columns: 72px 1fr;

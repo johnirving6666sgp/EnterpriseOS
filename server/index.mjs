@@ -1423,7 +1423,7 @@ function getSystemAgentSpec(id) {
     '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料试制、设备选型、客户开发。',
     '重点寻找：高校/研究院设备升级、航天军工材料试制、特种合金小试线、真空熔炼/悬浮熔炼需求、进口替代、招投标苗头、供应链价格变化。',
     '请按四个维度判断好商机：有没有真实需求、有没有预算、什么时候采购、我们有没有优势。',
-    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","url":"...","date":"...","quality":{"demand":1-5,"budget":1-5,"timing":1-5,"advantage":1-5,"total":1-100,"recommendation":"..."},"learning":"...","broadcast":{"title":"...","content":"..."}}。',
+    '请只返回 JSON：{"title":"...","source":"...","match":"...","why":"...","action":"...","urgency":"...","url":"...","date":"...","procurementUnit":"...","tenderUnit":"...","budget":"...","deadline":"...","contact":"...","contactPhone":"...","missingFields":["..."],"quality":{"demand":1-5,"budget":1-5,"timing":1-5,"advantage":1-5,"total":1-100,"recommendation":"..."},"learning":"...","broadcast":{"title":"...","content":"..."}}。',
     'title 要像商机卡片标题，why 要讲清楚为什么可能是大机会，action 要说明同事下一步怎么验证和补充信息。'
   ].join('\n');
 }
@@ -1489,6 +1489,19 @@ function normalizeSystemAgentOutput(id, data, raw, tenderSignals = []) {
       urgency: data.urgency || tender?.urgency || '需要 48 小时内验证线索真实性和联系人。',
       url: data.url || tender?.url || '',
       date: data.date || tender?.date || '',
+      procurementUnit: data.procurementUnit || data.buyer || tender?.procurementUnit || tender?.buyer || '',
+      tenderUnit: data.tenderUnit || tender?.tenderUnit || '',
+      buyer: data.buyer || tender?.buyer || tender?.procurementUnit || '',
+      agency: data.agency || tender?.agency || '',
+      budget: data.budget || tender?.budget || '',
+      deadline: data.deadline || tender?.deadline || '',
+      contact: data.contact || tender?.contact || '',
+      contactPhone: data.contactPhone || tender?.contactPhone || '',
+      projectName: data.projectName || tender?.projectName || tender?.title || '',
+      tenderInfo: data.tenderInfo || tender?.tenderInfo || '',
+      rawSnippet: data.rawSnippet || tender?.rawSnippet || '',
+      infoCompleteness: data.infoCompleteness || tender?.infoCompleteness || 0,
+      missingFields: data.missingFields || tender?.missingFields || [],
       quality: data.quality || tender?.quality || evaluateTextOpportunity(`${data.title || tender?.title || ''} ${data.why || tender?.why || ''}`),
       recommendation:
         data.recommendation ||
@@ -1567,7 +1580,22 @@ function dedupeTenderSignals(signals) {
 function formatTenderSignals(signals = []) {
   return signals
     .slice(0, 12)
-    .map((item) => `- ${item.date || ''} ${item.title} / ${item.source} / ${item.url || ''} / ${item.why}`)
+    .map((item) => {
+      const unit = item.procurementUnit || item.tenderUnit || item.buyer || '招标/采购单位待核验';
+      const budget = item.budget || '预算待核验';
+      const deadline = item.deadline || '截止时间待核验';
+      const contact = [item.contact, item.contactPhone].filter(Boolean).join(' ') || '联系人待核验';
+      const missing = item.missingFields?.length ? `缺失字段：${item.missingFields.join('、')}` : '关键字段基本齐全';
+      return [
+        `- ${item.date || '日期待确认'} ${item.title}`,
+        `  来源：${item.source} / ${item.url || ''}`,
+        `  招标/采购单位：${unit}`,
+        `  预算：${budget}；截止/开标：${deadline}；联系人：${contact}`,
+        `  类型/地区：${item.type || '待确认'} / ${item.region || '待确认'}；信息完整度：${item.infoCompleteness || 0}%；${missing}`,
+        `  判断：${item.why}`,
+        `  下一步：${item.action}`
+      ].join('\n');
+    })
     .join('\n');
 }
 
@@ -1590,6 +1618,19 @@ function normalizeSavedOpportunity(opportunity, fallbackId) {
     why: opportunity.why || '',
     action: opportunity.action || '确认客户背景、真实需求、预算、采购时间和下一步跟进动作。',
     urgency: opportunity.urgency || '',
+    procurementUnit: opportunity.procurementUnit || opportunity.buyer || '',
+    tenderUnit: opportunity.tenderUnit || '',
+    buyer: opportunity.buyer || opportunity.procurementUnit || '',
+    agency: opportunity.agency || '',
+    budget: opportunity.budget || '',
+    deadline: opportunity.deadline || '',
+    contact: opportunity.contact || '',
+    contactPhone: opportunity.contactPhone || '',
+    projectName: opportunity.projectName || opportunity.title || '',
+    tenderInfo: opportunity.tenderInfo || '',
+    rawSnippet: opportunity.rawSnippet || '',
+    infoCompleteness: opportunity.infoCompleteness || 0,
+    missingFields: opportunity.missingFields || [],
     url: opportunity.url || '',
     date: opportunity.date || '',
     quality: opportunity.quality || evaluateTextOpportunity(`${opportunity.title || ''} ${opportunity.why || ''} ${opportunity.action || ''}`),

@@ -2474,6 +2474,28 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
               <small>{card.source}</small>
               <h3>{card.title}</h3>
               <p>{card.why}</p>
+              <div className="tender-detail-grid">
+                <span>
+                  <em>招标/采购单位</em>
+                  <strong>{card.procurementUnit || card.tenderUnit || card.buyer || '待核验'}</strong>
+                </span>
+                <span>
+                  <em>预算/限价</em>
+                  <strong>{card.budget || '待核验'}</strong>
+                </span>
+                <span>
+                  <em>截止/开标</em>
+                  <strong>{card.deadline || '待核验'}</strong>
+                </span>
+                <span>
+                  <em>联系人</em>
+                  <strong>{[card.contact, card.contactPhone].filter(Boolean).join(' ') || '待核验'}</strong>
+                </span>
+              </div>
+              <p className="tender-meta-line">
+                {card.type || '公告类型待确认'} · {card.region || '地区待确认'} · 信息完整度 {card.infoCompleteness || 0}%
+              </p>
+              {card.missingFields?.length > 0 && <p className="action-note">还需补齐：{card.missingFields.join('、')}</p>}
               <div className="opportunity-score">
                 <strong>{opportunityScore(card)}</strong>
                 <span>综合评分</span>

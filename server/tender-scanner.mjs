@@ -243,7 +243,8 @@ function parseQianlimaRows(html, keyword, source, sourceUrl) {
     const [, date, region, type, rawTitle] = match;
     const title = cleanTitle(rawTitle);
     if (!isRelevant(title)) continue;
-    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type, region, date, url: sourceUrl }));
+    const snippet = getNearbyText(text, match.index, match[0].length);
+    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type, region, date, url: sourceUrl, snippet }));
   }
   return rows.length ? rows : parseLooseRows(text, keyword, source, sourceUrl);
 }
@@ -259,7 +260,19 @@ function parseQianlimaTableRows(html, keyword, source, sourceUrl) {
     const date = normalizeDate(rawDate);
     const title = cleanTitle(titleParts.join(' '));
     if (!date || !title || !isRelevant(title)) continue;
-    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type: cleanTitle(type) || guessTenderType(title), region: cleanTitle(region) || '待确认', date, url: sourceUrl }));
+    rows.push(
+      toOpportunity({
+        title,
+        platform: source.name,
+        sourceId: source.id,
+        keyword,
+        type: cleanTitle(type) || guessTenderType(title),
+        region: cleanTitle(region) || '待确认',
+        date,
+        url: sourceUrl,
+        snippet: cells.join(' ')
+      })
+    );
   }
   return rows;
 }
@@ -273,7 +286,19 @@ function parseCtbpspRows(html, keyword, source, sourceUrl) {
     const [, maybeDate, rawTitle] = match;
     const title = cleanTitle(rawTitle);
     if (!isRelevant(title) || title.includes('bulletinList')) continue;
-    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type: '招标公告', region: '全国', date: normalizeDate(maybeDate) || new Date().toISOString().slice(0, 10), url: sourceUrl }));
+    rows.push(
+      toOpportunity({
+        title,
+        platform: source.name,
+        sourceId: source.id,
+        keyword,
+        type: '招标公告',
+        region: '全国',
+        date: normalizeDate(maybeDate) || new Date().toISOString().slice(0, 10),
+        url: sourceUrl,
+        snippet: getNearbyText(text, match.index, match[0].length)
+      })
+    );
   }
   return rows.slice(0, 20);
 }
@@ -286,8 +311,8 @@ function parseLooseRows(text, keyword, source, sourceUrl) {
     .filter((line) => line.length >= 8 && line.length <= 180 && isRelevant(line));
   for (const title of lines) {
     const index = text.indexOf(title);
-    const nearby = text.slice(Math.max(0, index - 80), index + title.length + 80);
-    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type: guessTenderType(title), region: guessRegion(nearby), date: normalizeDate(nearby.match(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/)?.[0]) || '', url: sourceUrl }));
+    const nearby = getNearbyText(text, index, title.length, 160);
+    rows.push(toOpportunity({ title, platform: source.name, sourceId: source.id, keyword, type: guessTenderType(title), region: guessRegion(nearby), date: normalizeDate(nearby.match(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/)?.[0]) || '', url: sourceUrl, snippet: nearby }));
   }
   return dedupe(rows).slice(0, 30);
 }
@@ -303,31 +328,49 @@ function manualOpportunity({ source, keyword, today, reason }) {
     date: today,
     url: `${source.baseUrl}?keyWords=${encodeURIComponent(keyword)}`,
     manual: true,
-    manualReason: reason
+    manualReason: reason,
+    snippet: reason
   });
 }
 
-function toOpportunity({ title, platform, sourceId, keyword, type, region, date, url, manual = false, manualReason = '' }) {
+function toOpportunity({ title, platform, sourceId, keyword, type, region, date, url, manual = false, manualReason = '', snippet = '' }) {
+  const tender = enrichTenderFields({ title, keyword, type, region, date, url, snippet, manual });
   const score = scoreOpportunity(title, keyword, manual);
-  const quality = evaluateOpportunityQuality({ title, keyword, type, date, manual, score });
+  const quality = evaluateOpportunityQuality({ title, keyword, type, date, manual, score, tender });
+  const unitLabel = tender.procurementUnit || tender.tenderUnit || tender.buyer || '招标/采购单位待核验';
+  const missing = tender.missingFields.length ? `仍缺：${tender.missingFields.join('、')}。` : '关键招标信息已基本齐全。';
   return {
-    id: stableId([sourceId, keyword, title, url]),
+    id: stableId([sourceId, keyword, title, tender.procurementUnit, url]),
     title,
     source: `${platform} / ${type} / ${region}`,
     platform,
+    sourcePlatform: platform,
     sourceId,
     keyword,
     date,
     region,
     type,
     url,
+    projectName: tender.projectName,
+    procurementUnit: tender.procurementUnit,
+    tenderUnit: tender.tenderUnit,
+    buyer: tender.buyer,
+    agency: tender.agency,
+    budget: tender.budget,
+    deadline: tender.deadline,
+    contact: tender.contact,
+    contactPhone: tender.contactPhone,
+    tenderInfo: tender.tenderInfo,
+    rawSnippet: tender.rawSnippet,
+    infoCompleteness: tender.infoCompleteness,
+    missingFields: tender.missingFields,
     match: manual ? '需人工打开验证' : `招标关键词匹配 ${Math.min(96, score)}%`,
     why: manual
-      ? `${platform} 当前页面${manualReason || '需要浏览器渲染或存在访问限制'}，系统已保留精确关键词检索入口。`
-      : `标题命中“${keyword}”及公司关注方向，可能与熔炼设备、新材料研发、金属材料试制或报价机会相关。`,
+      ? `${platform} 当前页面${manualReason || '需要浏览器渲染或存在访问限制'}，系统已保留精确关键词检索入口。需要打开后补齐招标/采购单位、预算、截止时间和联系人。`
+      : `命中“${keyword}”及公司关注方向；当前识别单位：${unitLabel}。${missing}`,
     action: manual
       ? `打开链接核验“${keyword}”最新公告；确认采购单位、技术参数、报名截止时间和联系人后再转为任务。`
-      : '收藏后交给个人助理或报价 Agent 拆解客户背景、设备/服务匹配度、报价风险和下一步跟进动作。',
+      : `先核验 ${unitLabel} 的真实需求、预算、截止时间和联系方式，再交给客户管理/任务/报价 Agent 拆解跟进。`,
     urgency: manual ? '今天人工验证一次。' : '24 小时内核实公告详情、报名条件和是否需要快速报价。',
     score,
     quality,
@@ -338,6 +381,134 @@ function toOpportunity({ title, platform, sourceId, keyword, type, region, date,
   };
 }
 
+function enrichTenderFields({ title, type, region, date, url, snippet = '', manual = false }) {
+  const combined = cleanTenderText([title, snippet].filter(Boolean).join(' '));
+  const titleUnit = manual ? '' : inferTitleUnit(title);
+  const procurementUnit = inferUnit(combined, ['采购人', '采购单位', '采购方', '采购机构']) || titleUnit;
+  const tenderUnit = inferUnit(combined, ['招标人', '招标单位', '建设单位', '业主单位', '项目单位']);
+  const agency = inferUnit(combined, ['招标代理', '代理机构', '采购代理机构']);
+  const buyer = procurementUnit || tenderUnit || titleUnit;
+  const budget = inferBudget(combined);
+  const deadline = inferDeadline(combined);
+  const contactInfo = inferContact(combined);
+  const projectName = inferProjectName(title, combined);
+  const fields = {
+    projectName,
+    procurementUnit: procurementUnit || buyer,
+    tenderUnit,
+    buyer,
+    agency,
+    budget,
+    deadline,
+    contact: contactInfo.name,
+    contactPhone: contactInfo.phone
+  };
+  const missingFields = [
+    !fields.procurementUnit && '招标/采购单位',
+    !fields.budget && '预算/最高限价',
+    !fields.deadline && '截止/开标时间',
+    !fields.contact && !fields.contactPhone && '联系人'
+  ].filter(Boolean);
+
+  return {
+    ...fields,
+    tenderInfo: [
+      `项目：${projectName || title}`,
+      `单位：${fields.procurementUnit || '待核验'}`,
+      `类型：${type || '待确认'}`,
+      `地区：${region || '待确认'}`,
+      `日期：${date || '待确认'}`,
+      `预算：${budget || '待核验'}`,
+      `截止：${deadline || '待核验'}`,
+      manual ? '状态：需人工打开来源验证' : ''
+    ]
+      .filter(Boolean)
+      .join('；'),
+    rawSnippet: cleanTenderText(snippet).slice(0, 260),
+    infoCompleteness: calculateCompleteness(fields),
+    missingFields,
+    url
+  };
+}
+
+function inferUnit(text, labels) {
+  for (const label of labels) {
+    const pattern = new RegExp(`${label}\\s*[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9（）()·\\-]{3,70})`);
+    const match = text.match(pattern);
+    if (match?.[1]) return cleanUnit(match[1]);
+  }
+  return '';
+}
+
+function inferTitleUnit(title = '') {
+  const clean = cleanTenderText(title);
+  const bracket = clean.match(/^【([^】]{2,24})】/)?.[1];
+  if (bracket) return cleanUnit(bracket);
+  const patterns = [
+    /([\u4e00-\u9fa5A-Za-z0-9（）()·-]{2,42}?(?:有限公司|集团有限公司|股份有限公司|集团|研究院|研究所|大学|学院|实验室|中心|医院|公司|厂|院|所))(?=.*(?:采购|招标|询价|项目|熔炼|设备|材料))/,
+    /^([\u4e00-\u9fa5A-Za-z0-9（）()·-]{2,24}?(?:厂|公司|研究院|研究所|大学|学院|实验室|中心))\s*(?:熔炼|真空|冷坩埚|高温|高熵|靶材|金属|新材料)/
+  ];
+  for (const pattern of patterns) {
+    const match = clean.match(pattern);
+    if (match?.[1]) return cleanUnit(match[1]);
+  }
+  return '';
+}
+
+function cleanUnit(value = '') {
+  return String(value)
+    .replace(/^(名称|单位|联系人|联系方式|电话|地址)\s*[:：]?/, '')
+    .replace(/20\d{2}年?\d{0,2}月?.*$/, '')
+    .replace(/(采购|招标|询价|公告|项目|预算|联系人|联系方式|电话|地址|开标|报名).*$/, '')
+    .replace(/[，。；;、\s]+$/g, '')
+    .trim()
+    .slice(0, 60);
+}
+
+function inferProjectName(title = '', text = '') {
+  const named = text.match(/(?:项目名称|采购项目|招标项目)\s*[:：]\s*([^\n。；;]{6,90})/)?.[1];
+  return cleanTitle(named || title).slice(0, 100);
+}
+
+function inferBudget(text = '') {
+  const patterns = [
+    /(?:预算金额|项目预算|采购预算|最高限价|控制价|招标控制价)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?\s*(?:万元|元|人民币|万))/,
+    /([0-9]+(?:\.[0-9]+)?\s*万元)(?=.{0,12}(?:预算|限价|控制价|资金|报价))/,
+    /(?:预算|限价|控制价|资金).{0,12}?([0-9]+(?:\.[0-9]+)?\s*万元)/
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].replace(/\s+/g, '');
+  }
+  return '';
+}
+
+function inferDeadline(text = '') {
+  const patterns = [
+    /(?:投标截止时间|响应文件提交截止时间|报名截止时间|开标时间|截止时间)\s*[:：]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)/,
+    /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)(?=.{0,18}(?:截止|开标|报名))/
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].replace(/[年月]/g, '-').replace(/日/g, '').replace('：', ':').trim();
+  }
+  return '';
+}
+
+function inferContact(text = '') {
+  const name = text.match(/(?:联系人|项目联系人|采购联系人)\s*[:：]?\s*([\u4e00-\u9fa5]{2,4})/)?.[1] || '';
+  const phone =
+    text.match(/(?:电话|联系方式|联系电话)\s*[:：]?\s*((?:1[3-9]\d{9})|(?:0\d{2,3}[-\s]?\d{7,8})(?:-\d{1,4})?)/)?.[1] ||
+    text.match(/(?:1[3-9]\d{9})|(?:0\d{2,3}[-\s]?\d{7,8})(?:-\d{1,4})?/)?.[0] ||
+    '';
+  return { name, phone };
+}
+
+function calculateCompleteness(fields) {
+  const checks = [fields.projectName, fields.procurementUnit || fields.tenderUnit || fields.buyer, fields.budget, fields.deadline, fields.contact || fields.contactPhone];
+  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+}
+
 function recommendOwner(title = '') {
   if (/材料|合金|靶材|高熵|难熔/.test(title)) return 'guihua';
   if (/设备|熔炼炉|真空炉|冷坩埚|感应|电弧/.test(title)) return 'kingsong';
@@ -345,14 +516,15 @@ function recommendOwner(title = '') {
   return 'larry';
 }
 
-function evaluateOpportunityQuality({ title, keyword, type, date, manual, score }) {
+function evaluateOpportunityQuality({ title, keyword, type, date, manual, score, tender = {} }) {
   const text = `${title} ${keyword} ${type}`;
   const days = daysSince(date);
   const demand = /招标|采购|询价|公告|项目|升级|设备|试制|实验室/.test(text) ? 4 : 2;
-  const budget = /招标|采购|预算|中标|成交/.test(text) ? 4 : manual ? 2 : 3;
+  const budget = tender.budget ? 5 : /招标|采购|预算|中标|成交/.test(text) ? 4 : manual ? 2 : 3;
   const timing = days === null ? (manual ? 2 : 3) : days <= 30 ? 5 : days <= 90 ? 4 : days <= 180 ? 2 : 1;
   const advantage = /悬浮|真空|熔炼|冷坩埚|难熔|高熵|靶材|材料|合金/.test(text) ? 5 : 3;
-  const total = Math.round((demand + budget + timing + advantage) * 5 + score * 0.2);
+  const completenessBoost = Math.round((tender.infoCompleteness || 0) / 12);
+  const total = Math.round((demand + budget + timing + advantage) * 5 + score * 0.2 + completenessBoost);
   return {
     demand,
     budget,
@@ -409,6 +581,18 @@ function normalizeText(html) {
     .replace(/\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{2,}/g, '\n');
+}
+
+function cleanTenderText(value) {
+  return normalizeText(String(value || ''))
+    .replace(/\s+/g, ' ')
+    .replace(/([：:])\s+/g, '$1')
+    .trim();
+}
+
+function getNearbyText(text, index, length, radius = 220) {
+  const safeIndex = Math.max(0, index || 0);
+  return cleanTenderText(text.slice(Math.max(0, safeIndex - radius), safeIndex + length + radius));
 }
 
 function decodeHtml(html) {
