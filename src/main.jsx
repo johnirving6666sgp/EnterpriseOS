@@ -75,6 +75,11 @@ const providerOptions = [
     id: 'openrouter',
     label: 'OpenRouter',
     models: ['openrouter/openai/gpt-4.1-mini', 'openrouter/openai/gpt-4.1', 'openrouter/anthropic/claude-3.5-haiku']
+  },
+  {
+    id: 'openrouter-backup',
+    label: 'OpenRouter 备用',
+    models: ['openrouter/openai/gpt-4.1-mini', 'openrouter/openai/gpt-4.1', 'openrouter/anthropic/claude-3.5-haiku', 'openrouter/anthropic/claude-3.7-sonnet']
   }
 ];
 

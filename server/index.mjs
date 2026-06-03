@@ -18,11 +18,13 @@ const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1
 const INVITE_CODE = process.env.INVITE_CODE || 'team-test';
 const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || path.join(rootDir, 'vault', 'enterprise-os');
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_BACKUP_API_KEY = process.env.OPENROUTER_BACKUP_API_KEY || process.env.OPENROUTER_API_KEY_BACKUP || '';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || 'https://timeconnector.net';
 const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 30000);
 const OPENROUTER_RETRY_COUNT = Number(process.env.OPENROUTER_RETRY_COUNT || 1);
+const OPENROUTER_HAS_ANY_KEY = Boolean(OPENROUTER_API_KEY || OPENROUTER_BACKUP_API_KEY);
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
 const fixedSystemAgentIds = ['external', 'customer', 'task', 'quote', 'internal'];
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
@@ -990,13 +992,14 @@ app.post('/api/agent-feedback', requireAuth, async (req, res) => {
 app.post('/api/llm/proxy', requireAuth, async (req, res) => {
   const { provider, apiModel, messages = [] } = req.body ?? {};
   const prompt = messages.map((item) => item.content).join('\n');
-  if (!OPENROUTER_API_KEY) {
+  if (!OPENROUTER_HAS_ANY_KEY) {
     const simulatedReply = `OpenRouter API key 尚未配置。已收到 ${provider}/${apiModel} 请求，但当前只能返回本地降级回复。`;
     const usage = calculateUsage(prompt, simulatedReply, 'balanced');
     return res.json({ provider, apiModel, reply: simulatedReply, usage, simulated: true });
   }
   try {
     const result = await callOpenRouter({
+      provider,
       model: toOpenRouterModel(apiModel),
       messages,
       temperature: 0.4,
@@ -1013,24 +1016,26 @@ app.get('/api/admin/model-health', requireAuth, requireJamie, async (req, res) =
   const store = await readStore();
   const live = req.query.live === '1';
   const routes = collectModelRoutes(store);
-  const uniqueModels = [...new Set(routes.map((route) => route.normalizedModel))];
+  const uniqueRoutes = uniqueModelRoutes(routes);
   const modelChecks = {};
 
-  if (!OPENROUTER_API_KEY) {
-    for (const model of uniqueModels) {
-      modelChecks[model] = {
+  if (!OPENROUTER_HAS_ANY_KEY) {
+    for (const route of uniqueRoutes) {
+      modelChecks[route.key] = {
         ok: false,
         liveChecked: false,
+        keyPreference: keyPreferenceForProvider(route.provider),
         reason: 'missing_openrouter_key',
-        message: 'OPENROUTER_API_KEY 未配置，无法进行真模型连通性检查。'
+        message: 'OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY 都未配置，无法进行真模型连通性检查。'
       };
     }
   } else if (live) {
-    for (const model of uniqueModels) {
+    for (const route of uniqueRoutes) {
       const startedAt = Date.now();
       try {
         const result = await callOpenRouter({
-          model,
+          provider: route.provider,
+          model: route.normalizedModel,
           messages: [
             { role: 'system', content: '你是 EnterpriseOS 的模型连通性检测器。' },
             { role: 'user', content: '请只回复 OK。' }
@@ -1038,14 +1043,15 @@ app.get('/api/admin/model-health', requireAuth, requireJamie, async (req, res) =
           temperature: 0,
           maxTokens: 8
         });
-        modelChecks[model] = {
+        modelChecks[route.key] = {
           ok: true,
           liveChecked: true,
           latencyMs: Date.now() - startedAt,
-          resolvedModel: result.model
+          resolvedModel: result.model,
+          keySlot: result.keySlot
         };
       } catch (error) {
-        modelChecks[model] = {
+        modelChecks[route.key] = {
           ok: false,
           liveChecked: true,
           latencyMs: Date.now() - startedAt,
@@ -1054,23 +1060,26 @@ app.get('/api/admin/model-health', requireAuth, requireJamie, async (req, res) =
       }
     }
   } else {
-    for (const model of uniqueModels) {
-      modelChecks[model] = {
+    for (const route of uniqueRoutes) {
+      modelChecks[route.key] = {
         ok: true,
         liveChecked: false,
+        keyPreference: keyPreferenceForProvider(route.provider),
         message: '路由格式已检查；加 ?live=1 可进行真模型请求测试。'
       };
     }
   }
 
   res.json({
-    openRouterConfigured: Boolean(OPENROUTER_API_KEY),
+    openRouterConfigured: OPENROUTER_HAS_ANY_KEY,
+    primaryOpenRouterConfigured: Boolean(OPENROUTER_API_KEY),
+    backupOpenRouterConfigured: Boolean(OPENROUTER_BACKUP_API_KEY),
     live,
     timeoutMs: OPENROUTER_TIMEOUT_MS,
     retryCount: OPENROUTER_RETRY_COUNT,
     routes: routes.map((route) => ({
       ...route,
-      health: modelChecks[route.normalizedModel]
+      health: modelChecks[modelRouteKey(route.provider, route.normalizedModel)]
     })),
     models: modelChecks
   });
@@ -1266,20 +1275,49 @@ function collectModelRoutes(store) {
   return [...personal, ...system];
 }
 
+function modelRouteKey(provider, normalizedModel) {
+  return `${provider || 'openrouter'}:${normalizedModel}`;
+}
+
+function uniqueModelRoutes(routes = []) {
+  const seen = new Set();
+  return routes
+    .map((route) => ({
+      key: modelRouteKey(route.provider, route.normalizedModel),
+      provider: route.provider,
+      normalizedModel: route.normalizedModel
+    }))
+    .filter((route) => {
+      if (seen.has(route.key)) return false;
+      seen.add(route.key);
+      return true;
+    });
+}
+
+function keyPreferenceForProvider(provider = '') {
+  return provider === 'openrouter-backup' ? 'backup-first' : 'primary-first';
+}
+
+function openRouterKeyCandidates(provider = '') {
+  const primary = OPENROUTER_API_KEY ? [{ slot: 'primary', value: OPENROUTER_API_KEY }] : [];
+  const backup = OPENROUTER_BACKUP_API_KEY ? [{ slot: 'backup', value: OPENROUTER_BACKUP_API_KEY }] : [];
+  return provider === 'openrouter-backup' ? [...backup, ...primary] : [...primary, ...backup];
+}
+
 function llmUnavailable(reason = 'missing_openrouter_key') {
   return {
     provider: 'fallback',
     simulated: true,
-    reason,
-    message:
-      reason === 'missing_openrouter_key'
-        ? 'OPENROUTER_API_KEY 未配置，当前使用本地降级逻辑，不是真模型分析。'
+      reason,
+      message:
+        reason === 'missing_openrouter_key'
+        ? 'OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY 都未配置，当前使用本地降级逻辑，不是真模型分析。'
         : '模型调用失败，当前使用本地降级逻辑。'
   };
 }
 
 async function generateAgentReply({ store, agent, user, message }) {
-  if (!OPENROUTER_API_KEY) {
+  if (!OPENROUTER_HAS_ANY_KEY) {
     return {
       reply: fallbackAgentReply({ agent, user, message }),
       llm: llmUnavailable()
@@ -1293,6 +1331,7 @@ async function generateAgentReply({ store, agent, user, message }) {
   const model = toOpenRouterModel(agent.apiModel);
   try {
     const result = await callOpenRouter({
+      provider: agent.provider,
       model,
       messages: [
         {
@@ -1315,7 +1354,7 @@ async function generateAgentReply({ store, agent, user, message }) {
     });
     return {
       reply: result.reply,
-      llm: { provider: 'openrouter', model: result.model, simulated: false }
+      llm: { provider: 'openrouter', model: result.model, keySlot: result.keySlot, simulated: false }
     };
   } catch (error) {
     return {
@@ -1337,10 +1376,13 @@ function getPersonalAgentRoleInstruction(userId) {
   return '个人助理 Agent 的核心定位：保护同事私密上下文，帮助该同事把原始工作信息转成客户、任务、报价、商机和可复用经验。';
 }
 
-async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 900 }) {
+async function callOpenRouter({ provider = 'openrouter', model, messages, temperature = 0.4, maxTokens = 900 }) {
   const attempts = Math.max(1, OPENROUTER_RETRY_COUNT + 1);
   let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  const keys = openRouterKeyCandidates(provider);
+  if (!keys.length) throw new Error('OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY missing');
+  for (const key of keys) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
     try {
@@ -1348,7 +1390,7 @@ async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 
         method: 'POST',
         signal: controller.signal,
         headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${key.value}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': OPENROUTER_SITE_URL,
           'X-Title': OPENROUTER_APP_NAME
@@ -1366,13 +1408,14 @@ async function callOpenRouter({ model, messages, temperature = 0.4, maxTokens = 
       }
       const reply = payload.choices?.[0]?.message?.content?.trim();
       if (!reply) throw new Error('OpenRouter returned an empty reply');
-      return { reply, model: payload.model ?? model };
+      return { reply, model: payload.model ?? model, keySlot: key.slot };
     } catch (error) {
       lastError = error;
       if (attempt >= attempts) break;
       await sleep(400 * attempt);
     } finally {
       clearTimeout(timeout);
+    }
     }
   }
   throw new Error(lastError?.name === 'AbortError' ? `OpenRouter timeout after ${OPENROUTER_TIMEOUT_MS}ms` : lastError?.message || 'OpenRouter request failed');
@@ -1443,7 +1486,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
     .map((item) => `- ${item.title}: ${item.learning || item.text || item.opportunity?.why || ''}`)
     .join('\n');
 
-  if (!OPENROUTER_API_KEY) {
+  if (!OPENROUTER_HAS_ANY_KEY) {
     return {
       output: fallbackSystemAgentOutput(id, '', tenderSignals),
       llm: llmUnavailable()
@@ -1454,6 +1497,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
 
   try {
     const result = await callOpenRouter({
+      provider: systemAgent.provider,
       model,
       messages: [
         { role: 'system', content: spec },
@@ -1474,7 +1518,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
     const data = parseJsonObject(result.reply);
     return {
       output: normalizeSystemAgentOutput(id, data, result.reply, tenderSignals),
-      llm: { provider: 'openrouter', model: result.model, simulated: false }
+      llm: { provider: 'openrouter', model: result.model, keySlot: result.keySlot, simulated: false }
     };
   } catch (error) {
     return {
