@@ -928,10 +928,26 @@ function backendFor(provider, model) {
 }
 
 function normalizeOpenRouterModel(backend, model) {
-  if (String(model).startsWith('openrouter/')) return String(model).replace(/^openrouter\//, '');
-  if (backend === 'anthropic') return `anthropic/${normalizeAnthropicModel(model)}`;
-  if (backend === 'openai') return `openai/${normalizeOpenAIModel(model)}`;
-  return model || 'openai/gpt-4.1-mini';
+  const clean = String(model || '').replace(/^(openrouter\/)+/, '');
+  const modelMap = {
+    'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
+    'claude-3-5-haiku-20241022': 'anthropic/claude-3.5-haiku',
+    'claude-3-7-sonnet': 'anthropic/claude-sonnet-4',
+    'claude-3-7-sonnet-20250219': 'anthropic/claude-sonnet-4',
+    'claude-sonnet-4': 'anthropic/claude-sonnet-4',
+    'claude-sonnet-4-20250514': 'anthropic/claude-sonnet-4',
+    'claude-opus-4': 'anthropic/claude-opus-4',
+    'claude-opus-4-20250514': 'anthropic/claude-opus-4',
+    'claude-opus-4.1': 'anthropic/claude-opus-4.1',
+    'gpt-4.1-mini': 'openai/gpt-4.1-mini',
+    'gpt-4.1': 'openai/gpt-4.1',
+    'gpt-4o-mini': 'openai/gpt-4o-mini'
+  };
+  if (modelMap[clean]) return modelMap[clean];
+  if (clean.includes('/')) return clean;
+  if (backend === 'anthropic') return `anthropic/${clean || 'claude-3.5-haiku'}`;
+  if (backend === 'openai') return `openai/${normalizeOpenAIModel(clean)}`;
+  return clean || 'openai/gpt-4.1-mini';
 }
 
 function normalizeAnthropicModel(model = '') {
