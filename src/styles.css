@@ -1508,6 +1508,104 @@ h2 {
   background: #fef2f2;
 }
 
+.wechat-voice-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.wechat-voice-card {
+  width: min(260px, 72vw);
+  padding: 24px 18px 18px;
+  border-radius: 14px;
+  color: #ffffff;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.86);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.28);
+}
+
+.wechat-voice-overlay.canceling .wechat-voice-card {
+  background: rgba(153, 27, 27, 0.9);
+}
+
+.wechat-voice-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.wechat-voice-bars {
+  display: flex;
+  justify-content: center;
+  align-items: end;
+  gap: 5px;
+  height: 28px;
+  margin-bottom: 12px;
+}
+
+.wechat-voice-bars span {
+  width: 5px;
+  height: 10px;
+  border-radius: 999px;
+  background: #9ff2d0;
+  animation: voicePulse 0.9s ease-in-out infinite;
+}
+
+.wechat-voice-bars span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.wechat-voice-bars span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.wechat-voice-bars span:nth-child(4) {
+  animation-delay: 0.36s;
+}
+
+.wechat-voice-bars span:nth-child(5) {
+  animation-delay: 0.48s;
+}
+
+.wechat-voice-card strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.wechat-voice-card p {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.wechat-voice-card em {
+  display: inline-block;
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.82);
+  font-style: normal;
+  font-weight: 900;
+}
+
+@keyframes voicePulse {
+  0%,
+  100% {
+    height: 8px;
+  }
+  50% {
+    height: 26px;
+  }
+}
+
 .mic-button,
 .send-button,
 .upload-button,

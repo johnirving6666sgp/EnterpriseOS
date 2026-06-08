@@ -328,6 +328,8 @@ function EnterpriseApp({ auth, onLogout }) {
   const [listening, setListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
   const [voiceTranscribing, setVoiceTranscribing] = useState(false);
+  const [voiceCanceling, setVoiceCanceling] = useState(false);
+  const [voiceDuration, setVoiceDuration] = useState(0);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
   const [broadcasted, setBroadcasted] = useState([]);
   const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [], task: [], quote: [], customer: [] });
@@ -384,6 +386,10 @@ function EnterpriseApp({ auth, onLogout }) {
   const voiceStartedAtRef = useRef(0);
   const voicePressedRef = useRef(false);
   const voiceStopTimerRef = useRef(null);
+  const voiceTimerRef = useRef(null);
+  const voiceStartYRef = useRef(0);
+  const voiceCancelRef = useRef(false);
+  const voiceStopReasonRef = useRef('send');
 
   const isJamie = auth.user.role === 'super_admin';
   const permissions = auth.user.permissions ?? { agents: true, customers: true, quote: true, tasks: true, insight: isJamie };
@@ -718,7 +724,26 @@ function EnterpriseApp({ auth, onLogout }) {
     }
   };
 
-  const startVoice = async () => {
+  const clearVoiceTimers = () => {
+    if (voiceStopTimerRef.current) {
+      window.clearTimeout(voiceStopTimerRef.current);
+      voiceStopTimerRef.current = null;
+    }
+    if (voiceTimerRef.current) {
+      window.clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+  };
+
+  const setVoiceCancelState = (canceling) => {
+    voiceCancelRef.current = canceling;
+    setVoiceCanceling(canceling);
+    if (voicePressedRef.current) {
+      setVoiceStatus(canceling ? '松开手指，取消发送' : '正在说话，松开转文字');
+    }
+  };
+
+  const startVoice = async (clientY = 0) => {
     if (!access.active || voicePressedRef.current || listening || voiceTranscribing) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       setVoiceStatus('当前浏览器不支持录音，请改用文字输入或上传音频。');
@@ -730,6 +755,9 @@ function EnterpriseApp({ auth, onLogout }) {
       const recorder = recorderOptions ? new MediaRecorder(stream, recorderOptions) : new MediaRecorder(stream);
       voiceChunksRef.current = [];
       voicePressedRef.current = true;
+      voiceCancelRef.current = false;
+      voiceStopReasonRef.current = 'send';
+      voiceStartYRef.current = clientY;
       voiceStartedAtRef.current = Date.now();
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = (event) => {
@@ -737,10 +765,24 @@ function EnterpriseApp({ auth, onLogout }) {
       };
       recorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
+        clearVoiceTimers();
+        const stopReason = voiceStopReasonRef.current;
         const chunks = voiceChunksRef.current;
         voiceChunksRef.current = [];
         mediaRecorderRef.current = null;
         setListening(false);
+        setVoiceCanceling(false);
+        setVoiceDuration(0);
+        if (stopReason === 'cancel') {
+          setVoiceStatus('已取消');
+          window.setTimeout(() => setVoiceStatus(''), 1600);
+          return;
+        }
+        if (stopReason === 'short') {
+          setVoiceStatus('说话时间太短');
+          window.setTimeout(() => setVoiceStatus(''), 1800);
+          return;
+        }
         if (!chunks.length) {
           setVoiceStatus('没有录到声音，请重试。');
           window.setTimeout(() => setVoiceStatus(''), 2600);
@@ -756,31 +798,45 @@ function EnterpriseApp({ auth, onLogout }) {
       };
       recorder.start();
       setListening(true);
-      setVoiceStatus('录音中，松开后转文字。');
+      setVoiceDuration(0);
+      setVoiceStatus('正在说话，松开转文字');
+      voiceTimerRef.current = window.setInterval(() => {
+        setVoiceDuration(Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
+      }, 250);
       voiceStopTimerRef.current = window.setTimeout(() => {
         if (voicePressedRef.current) stopVoice();
       }, 90000);
     } catch (error) {
       voicePressedRef.current = false;
       setListening(false);
+      setVoiceCanceling(false);
+      clearVoiceTimers();
       setVoiceStatus(error.name === 'NotAllowedError' ? '麦克风权限被拒绝，请在浏览器里允许麦克风。' : `无法开始录音：${error.message}`);
     }
   };
 
-  const stopVoice = () => {
+  const moveVoice = (clientY = 0) => {
+    if (!voicePressedRef.current || !clientY || !voiceStartYRef.current) return;
+    setVoiceCancelState(voiceStartYRef.current - clientY > 70);
+  };
+
+  const stopVoice = ({ cancel = false } = {}) => {
     if (!voicePressedRef.current && !listening) return;
     voicePressedRef.current = false;
-    if (voiceStopTimerRef.current) {
-      window.clearTimeout(voiceStopTimerRef.current);
-      voiceStopTimerRef.current = null;
-    }
+    clearVoiceTimers();
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       const durationMs = Date.now() - voiceStartedAtRef.current;
-      if (durationMs < 500) {
-        setVoiceStatus('录音太短，请按住说完整一句。');
+      const shouldCancel = cancel || voiceCancelRef.current;
+      if (shouldCancel) {
+        voiceStopReasonRef.current = 'cancel';
+        setVoiceStatus('已取消');
+      } else if (durationMs < 700) {
+        voiceStopReasonRef.current = 'short';
+        setVoiceStatus('说话时间太短');
       } else {
-        setVoiceStatus('正在结束录音...');
+        voiceStopReasonRef.current = 'send';
+        setVoiceStatus('正在转文字...');
       }
       try {
         recorder.requestData?.();
@@ -791,6 +847,8 @@ function EnterpriseApp({ auth, onLogout }) {
       return;
     }
     setListening(false);
+    setVoiceCanceling(false);
+    setVoiceDuration(0);
   };
 
   const saveOpportunity = (id) => {
@@ -1297,6 +1355,8 @@ function EnterpriseApp({ auth, onLogout }) {
           listening={listening}
           voiceStatus={voiceStatus}
           voiceTranscribing={voiceTranscribing}
+          voiceCanceling={voiceCanceling}
+          voiceDuration={voiceDuration}
           messages={messages}
           isThinking={isThinking}
           broadcasts={inboxBroadcasts}
@@ -1310,6 +1370,7 @@ function EnterpriseApp({ auth, onLogout }) {
           setPage={setPage}
           setWorkspaceId={setWorkspaceId}
           startVoice={startVoice}
+          moveVoice={moveVoice}
           stopVoice={stopVoice}
           sendMessage={sendMessage}
           clearConversation={clearConversation}
@@ -1715,6 +1776,8 @@ function CoworkerWorkspace({
   listening,
   voiceStatus,
   voiceTranscribing,
+  voiceCanceling,
+  voiceDuration,
   lastWorkflowArtifacts,
   messages,
   isThinking,
@@ -1727,6 +1790,7 @@ function CoworkerWorkspace({
   setPage,
   setWorkspaceId,
   startVoice,
+  moveVoice,
   stopVoice,
   sendMessage,
   clearConversation,
@@ -1850,6 +1914,25 @@ function CoworkerWorkspace({
           </div>
         )}
         <div className="voice-composer">
+          {listening && (
+            <div className={`wechat-voice-overlay ${voiceCanceling ? 'canceling' : ''}`}>
+              <div className="wechat-voice-card">
+                <div className="wechat-voice-icon">
+                  <Mic size={34} />
+                </div>
+                <div className="wechat-voice-bars" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <strong>{voiceCanceling ? '松开取消' : '正在说话'}</strong>
+                <p>{voiceCanceling ? '松开手指取消本次录音' : '松开转文字，上滑取消'}</p>
+                <em>{voiceDuration}s</em>
+              </div>
+            </div>
+          )}
           <div className="composer-input-row">
             <input
               value={draft}
@@ -1888,25 +1971,38 @@ function CoworkerWorkspace({
           <div className="composer-tool-row">
             <button
               className={`mic-button ${listening ? 'recording' : ''}`}
-              onMouseDown={startVoice}
-              onMouseUp={stopVoice}
-              onMouseLeave={stopVoice}
-              onTouchStart={(event) => {
+              onPointerDown={(event) => {
+                if (event.button && event.button !== 0) return;
                 event.preventDefault();
-                startVoice();
+                try {
+                  event.currentTarget.setPointerCapture?.(event.pointerId);
+                } catch {
+                  // Pointer capture is best-effort on older mobile browsers.
+                }
+                startVoice(event.clientY);
               }}
-              onTouchEnd={(event) => {
+              onPointerMove={(event) => {
+                if (!listening) return;
                 event.preventDefault();
+                moveVoice(event.clientY);
+              }}
+              onPointerUp={(event) => {
+                event.preventDefault();
+                try {
+                  event.currentTarget.releasePointerCapture?.(event.pointerId);
+                } catch {
+                  // Already released or not supported.
+                }
                 stopVoice();
               }}
-              onTouchCancel={(event) => {
+              onPointerCancel={(event) => {
                 event.preventDefault();
-                stopVoice();
+                stopVoice({ cancel: true });
               }}
               disabled={!access.active || isThinking || attachmentLoading || voiceTranscribing}
             >
               <Mic size={20} />
-              {listening ? '松开结束并转文字' : '按住说话'}
+              {listening ? (voiceCanceling ? '松开取消' : '松开转文字') : '按住说话'}
             </button>
             <label className={`upload-button ${!access.active || isThinking || attachmentLoading ? 'disabled' : ''}`} htmlFor={uploadInputId}>
               <Paperclip size={18} />
