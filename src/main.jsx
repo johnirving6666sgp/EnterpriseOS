@@ -767,36 +767,38 @@ function EnterpriseApp({ auth, onLogout }) {
         stream.getTracks().forEach((track) => track.stop());
         clearVoiceTimers();
         const stopReason = voiceStopReasonRef.current;
-        const chunks = voiceChunksRef.current;
-        voiceChunksRef.current = [];
-        mediaRecorderRef.current = null;
-        setListening(false);
-        setVoiceCanceling(false);
-        setVoiceDuration(0);
-        if (stopReason === 'cancel') {
-          setVoiceStatus('已取消');
-          window.setTimeout(() => setVoiceStatus(''), 1600);
-          return;
-        }
-        if (stopReason === 'short') {
-          setVoiceStatus('说话时间太短');
-          window.setTimeout(() => setVoiceStatus(''), 1800);
-          return;
-        }
-        if (!chunks.length) {
-          setVoiceStatus('没有录到声音，请重试。');
-          window.setTimeout(() => setVoiceStatus(''), 2600);
-          return;
-        }
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        if (!blob.size) {
-          setVoiceStatus('没有录到声音，请按住说完整一句。');
-          window.setTimeout(() => setVoiceStatus(''), 2600);
-          return;
-        }
-        transcribeVoiceBlob(blob);
+        window.setTimeout(() => {
+          const chunks = voiceChunksRef.current;
+          voiceChunksRef.current = [];
+          mediaRecorderRef.current = null;
+          setListening(false);
+          setVoiceCanceling(false);
+          setVoiceDuration(0);
+          if (stopReason === 'cancel') {
+            setVoiceStatus('已取消');
+            window.setTimeout(() => setVoiceStatus(''), 1600);
+            return;
+          }
+          if (stopReason === 'short') {
+            setVoiceStatus('说话时间太短');
+            window.setTimeout(() => setVoiceStatus(''), 1800);
+            return;
+          }
+          if (!chunks.length) {
+            setVoiceStatus('没有录到声音，请重试。请确认浏览器已允许麦克风。');
+            window.setTimeout(() => setVoiceStatus(''), 3200);
+            return;
+          }
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          if (!blob.size) {
+            setVoiceStatus('没有录到声音，请按住说完整一句。');
+            window.setTimeout(() => setVoiceStatus(''), 2600);
+            return;
+          }
+          transcribeVoiceBlob(blob);
+        }, 120);
       };
-      recorder.start();
+      recorder.start(250);
       setListening(true);
       setVoiceDuration(0);
       setVoiceStatus('正在说话，松开转文字');
@@ -1953,7 +1955,9 @@ function CoworkerWorkspace({
               <Send size={18} />
             </button>
           </div>
-          {voiceStatus && <div className={`voice-status ${listening ? 'recording' : ''}`}>{voiceStatus}</div>}
+          <div className={`voice-status ${listening ? 'recording' : ''} ${voiceStatus ? '' : 'empty'}`}>
+            {voiceStatus || '语音状态'}
+          </div>
           {attachments.length > 0 && (
             <div className="attachment-preview">
               {attachments.map((file) => (
