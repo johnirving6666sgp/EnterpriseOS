@@ -567,7 +567,8 @@ async function llmProxy(request, env) {
 }
 
 async function speechTranscribe(request, env) {
-  if (!env.OPENAI_API_KEY) return json({ error: 'openai_key_missing', message: 'OPENAI_API_KEY 未配置，无法进行后端语音转文字。' }, 503);
+  const apiKey = String(env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return json({ error: 'openai_key_missing', message: 'OPENAI_API_KEY 未配置，无法进行后端语音转文字。' }, 503);
   const { audio = {} } = await readBody(request);
   const dataUrl = typeof audio.dataUrl === 'string' ? audio.dataUrl : '';
   const parsed = dataUrlToBlob(dataUrl, audio.type || 'audio/webm');
@@ -579,7 +580,7 @@ async function speechTranscribe(request, env) {
   form.append('file', parsed.blob, audio.name || `voice-${Date.now()}.webm`);
   const response = await fetch(env.OPENAI_TRANSCRIPTION_URL || OPENAI_TRANSCRIPTION_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` },
+    headers: { Authorization: `Bearer ${apiKey}` },
     body: form
   });
   const payload = await response.json().catch(() => ({}));
@@ -852,16 +853,16 @@ function persistArtifacts(store, artifacts) {
 
 async function callModel(env, provider = 'openrouter', apiModel = '', messages = []) {
   const backend = backendFor(provider, apiModel);
-  if (backend === 'anthropic' && env.ANTHROPIC_API_KEY) return callAnthropic(env, apiModel, messages);
-  if (backend === 'openai' && env.OPENAI_API_KEY) return callOpenAI(env, apiModel, messages);
+  if (backend === 'anthropic' && String(env.ANTHROPIC_API_KEY || '').trim()) return callAnthropic(env, apiModel, messages);
+  if (backend === 'openai' && String(env.OPENAI_API_KEY || '').trim()) return callOpenAI(env, apiModel, messages);
   return callOpenRouter(env, normalizeOpenRouterModel(backend, apiModel), messages);
 }
 
 async function callOpenRouter(env, model, messages) {
   const keys = [
-    env.OPENROUTER_API_KEY && ['primary', env.OPENROUTER_API_KEY],
-    env.OPENROUTER_BACKUP_API_KEY && ['backup', env.OPENROUTER_BACKUP_API_KEY]
-  ].filter(Boolean);
+    env.OPENROUTER_API_KEY && ['primary', String(env.OPENROUTER_API_KEY).trim()],
+    env.OPENROUTER_BACKUP_API_KEY && ['backup', String(env.OPENROUTER_BACKUP_API_KEY).trim()]
+  ].filter((item) => item?.[1]);
   if (!keys.length) throw new Error('OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY missing');
   let lastError;
   for (const [slot, key] of keys) {
@@ -870,7 +871,7 @@ async function callOpenRouter(env, model, messages) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${key}`,
+          Authorization: `Bearer ${key}`,
           'HTTP-Referer': env.OPENROUTER_SITE_URL || 'https://timeconnector.net',
           'X-Title': env.OPENROUTER_APP_NAME || 'EnterpriseOS'
         },
@@ -887,11 +888,12 @@ async function callOpenRouter(env, model, messages) {
 }
 
 async function callAnthropic(env, model, messages) {
+  const apiKey = String(env.ANTHROPIC_API_KEY || '').trim();
   const response = await fetch(env.ANTHROPIC_BASE_URL || ANTHROPIC_BASE_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY,
+      'x-api-key': apiKey,
       'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01'
     },
     body: JSON.stringify({ model: normalizeAnthropicModel(model), messages, temperature: 0.4, max_tokens: 900 })
@@ -902,9 +904,10 @@ async function callAnthropic(env, model, messages) {
 }
 
 async function callOpenAI(env, model, messages) {
+  const apiKey = String(env.OPENAI_API_KEY || '').trim();
   const response = await fetch(env.OPENAI_BASE_URL || OPENAI_CHAT_URL, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${env.OPENAI_API_KEY}` },
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: normalizeOpenAIModel(model), messages, temperature: 0.4, max_tokens: 900 })
   });
   const payload = await response.json().catch(() => ({}));
@@ -913,9 +916,14 @@ async function callOpenAI(env, model, messages) {
 }
 
 function backendFor(provider, model) {
-  const raw = `${provider || ''}/${model || ''}`.toLowerCase();
-  if (raw.includes('openai')) return 'openai';
-  if (raw.includes('claude') || raw.includes('anthropic')) return 'anthropic';
+  const cleanProvider = String(provider || '').toLowerCase();
+  if (cleanProvider === 'openrouter') return 'openrouter';
+  if (cleanProvider === 'openai' || cleanProvider === 'gpt') return 'openai';
+  if (cleanProvider === 'claude' || cleanProvider === 'anthropic') return 'anthropic';
+  const raw = String(model || '').toLowerCase();
+  if (raw.startsWith('openrouter/')) return 'openrouter';
+  if (raw.startsWith('openai/') || raw.startsWith('gpt-')) return 'openai';
+  if (raw.startsWith('anthropic/') || raw.includes('claude')) return 'anthropic';
   return 'openrouter';
 }
 
@@ -934,7 +942,7 @@ function normalizeAnthropicModel(model = '') {
 }
 
 function normalizeOpenAIModel(model = '') {
-  return model.replace(/^openai\//, '') || 'gpt-4.1-mini';
+  return model.replace(/^openrouter\/openai\//, '').replace(/^openai\//, '') || 'gpt-4.1-mini';
 }
 
 async function signToken(env, payload) {
