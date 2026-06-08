@@ -747,9 +747,14 @@ function EnterpriseApp({ auth, onLogout }) {
           return;
         }
         const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        if (!blob.size) {
+          setVoiceStatus('没有录到声音，请按住说完整一句。');
+          window.setTimeout(() => setVoiceStatus(''), 2600);
+          return;
+        }
         transcribeVoiceBlob(blob);
       };
-      recorder.start(1000);
+      recorder.start();
       setListening(true);
       setVoiceStatus('录音中，松开后转文字。');
       voiceStopTimerRef.current = window.setTimeout(() => {
@@ -772,7 +777,16 @@ function EnterpriseApp({ auth, onLogout }) {
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       const durationMs = Date.now() - voiceStartedAtRef.current;
-      setVoiceStatus(durationMs < 500 ? '录音太短，请按住说完整一句。' : '正在结束录音...');
+      if (durationMs < 500) {
+        setVoiceStatus('录音太短，请按住说完整一句。');
+      } else {
+        setVoiceStatus('正在结束录音...');
+      }
+      try {
+        recorder.requestData?.();
+      } catch {
+        // Some mobile browsers throw if data is already flushed.
+      }
       recorder.stop();
       return;
     }
@@ -1881,8 +1895,14 @@ function CoworkerWorkspace({
                 event.preventDefault();
                 startVoice();
               }}
-              onTouchEnd={stopVoice}
-              onTouchCancel={stopVoice}
+              onTouchEnd={(event) => {
+                event.preventDefault();
+                stopVoice();
+              }}
+              onTouchCancel={(event) => {
+                event.preventDefault();
+                stopVoice();
+              }}
               disabled={!access.active || isThinking || attachmentLoading || voiceTranscribing}
             >
               <Mic size={20} />
