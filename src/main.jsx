@@ -28,7 +28,6 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 const API_BASE =
   import.meta.env.VITE_API_BASE ??
   (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:8787' : '');
@@ -327,6 +326,8 @@ function EnterpriseApp({ auth, onLogout }) {
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [thinkingByUser, setThinkingByUser] = useState({});
   const [listening, setListening] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('');
+  const [voiceTranscribing, setVoiceTranscribing] = useState(false);
   const [savedByUser, setSavedByUser] = useState({ larry: ['aerospace-valve'] });
   const [broadcasted, setBroadcasted] = useState([]);
   const [systemOutputs, setSystemOutputs] = useState({ internal: [], external: [], task: [], quote: [], customer: [] });
@@ -378,11 +379,11 @@ function EnterpriseApp({ auth, onLogout }) {
   const [accessByUser, setAccessByUser] = useState(
     Object.fromEntries(teammates.map((item) => [item.id, { active: true, ownerName: item.name }]))
   );
-  const recognitionRef = useRef(null);
-  const voiceActiveRef = useRef(false);
+  const mediaRecorderRef = useRef(null);
+  const voiceChunksRef = useRef([]);
+  const voiceStartedAtRef = useRef(0);
   const voicePressedRef = useRef(false);
-  const voiceBaseDraftRef = useRef('');
-  const voiceFinalTranscriptRef = useRef('');
+  const voiceStopTimerRef = useRef(null);
 
   const isJamie = auth.user.role === 'super_admin';
   const permissions = auth.user.permissions ?? { agents: true, customers: true, quote: true, tasks: true, insight: isJamie };
@@ -670,69 +671,110 @@ function EnterpriseApp({ auth, onLogout }) {
     });
   };
 
-  const composeVoiceDraft = (interimText = '') => {
-    const base = voiceBaseDraftRef.current.trimEnd();
-    const voiceText = `${voiceFinalTranscriptRef.current}${interimText}`.trim();
-    return [base, voiceText].filter(Boolean).join(base && voiceText ? ' ' : '');
+  const appendVoiceText = (text) => {
+    const clean = String(text ?? '').trim();
+    if (!clean) return;
+    setDraft((current) => [current.trimEnd(), clean].filter(Boolean).join(current.trim() ? '\n' : ''));
   };
 
-  const startRecognition = () => {
-    if (!SpeechRecognition || !access.active || voiceActiveRef.current || !voicePressedRef.current) return;
-    voiceActiveRef.current = true;
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'zh-CN';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.onstart = () => setListening(true);
-    recognition.onresult = (event) => {
-      let interimText = '';
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const transcript = event.results[index][0]?.transcript ?? '';
-        if (event.results[index].isFinal) {
-          voiceFinalTranscriptRef.current = `${voiceFinalTranscriptRef.current}${transcript}`;
-        } else {
-          interimText = `${interimText}${transcript}`;
+  const getRecorderOptions = () => {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac'];
+    const mimeType = candidates.find((type) => {
+      try {
+        return MediaRecorder.isTypeSupported(type);
+      } catch {
+        return false;
+      }
+    });
+    return mimeType ? { mimeType } : undefined;
+  };
+
+  const transcribeVoiceBlob = async (blob) => {
+    setVoiceTranscribing(true);
+    setVoiceStatus('正在转文字...');
+    try {
+      const dataUrl = await readFileAsDataUrl(blob);
+      const extension = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('aac') ? 'aac' : 'webm';
+      const response = await apiFetch('/api/speech/transcribe', {
+        method: 'POST',
+        body: JSON.stringify({
+          audio: {
+            dataUrl,
+            type: blob.type || 'audio/webm',
+            size: blob.size,
+            name: `voice-${Date.now()}.${extension}`
+          }
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || payload.detail || payload.error || 'voice_transcribe_failed');
+      appendVoiceText(payload.text);
+      setVoiceStatus(payload.text ? '转写完成，请确认后发送。' : '没有识别到有效语音。');
+    } catch (error) {
+      setVoiceStatus(`语音转写失败：${error.message}`);
+    } finally {
+      setVoiceTranscribing(false);
+      window.setTimeout(() => setVoiceStatus(''), 3600);
+    }
+  };
+
+  const startVoice = async () => {
+    if (!access.active || voicePressedRef.current || listening || voiceTranscribing) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setVoiceStatus('当前浏览器不支持录音，请改用文字输入或上传音频。');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorderOptions = getRecorderOptions();
+      const recorder = recorderOptions ? new MediaRecorder(stream, recorderOptions) : new MediaRecorder(stream);
+      voiceChunksRef.current = [];
+      voicePressedRef.current = true;
+      voiceStartedAtRef.current = Date.now();
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) voiceChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const chunks = voiceChunksRef.current;
+        voiceChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        setListening(false);
+        if (!chunks.length) {
+          setVoiceStatus('没有录到声音，请重试。');
+          window.setTimeout(() => setVoiceStatus(''), 2600);
+          return;
         }
-      }
-      setDraft(composeVoiceDraft(interimText));
-    };
-    recognition.onend = () => {
-      voiceActiveRef.current = false;
-      if (voicePressedRef.current) {
-        window.setTimeout(startRecognition, 80);
-        return;
-      }
-      setDraft(composeVoiceDraft());
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        transcribeVoiceBlob(blob);
+      };
+      recorder.start(1000);
+      setListening(true);
+      setVoiceStatus('录音中，松开后转文字。');
+      voiceStopTimerRef.current = window.setTimeout(() => {
+        if (voicePressedRef.current) stopVoice();
+      }, 90000);
+    } catch (error) {
+      voicePressedRef.current = false;
       setListening(false);
-    };
-    recognition.onerror = () => {
-      voiceActiveRef.current = false;
-      if (voicePressedRef.current) {
-        window.setTimeout(startRecognition, 120);
-        return;
-      }
-      setListening(false);
-    };
-    recognitionRef.current = recognition;
-    recognition.start();
-  };
-
-  const startVoice = () => {
-    if (!SpeechRecognition || !access.active || voicePressedRef.current) return;
-    voicePressedRef.current = true;
-    voiceBaseDraftRef.current = draft;
-    voiceFinalTranscriptRef.current = '';
-    startRecognition();
+      setVoiceStatus(error.name === 'NotAllowedError' ? '麦克风权限被拒绝，请在浏览器里允许麦克风。' : `无法开始录音：${error.message}`);
+    }
   };
 
   const stopVoice = () => {
+    if (!voicePressedRef.current && !listening) return;
     voicePressedRef.current = false;
-    voiceActiveRef.current = false;
-    setDraft(composeVoiceDraft());
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      recognitionRef.current?.abort?.();
+    if (voiceStopTimerRef.current) {
+      window.clearTimeout(voiceStopTimerRef.current);
+      voiceStopTimerRef.current = null;
+    }
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      const durationMs = Date.now() - voiceStartedAtRef.current;
+      setVoiceStatus(durationMs < 500 ? '录音太短，请按住说完整一句。' : '正在结束录音...');
+      recorder.stop();
+      return;
     }
     setListening(false);
   };
@@ -1239,6 +1281,8 @@ function EnterpriseApp({ auth, onLogout }) {
           coworker={coworker}
           draft={draft}
           listening={listening}
+          voiceStatus={voiceStatus}
+          voiceTranscribing={voiceTranscribing}
           messages={messages}
           isThinking={isThinking}
           broadcasts={inboxBroadcasts}
@@ -1655,6 +1699,8 @@ function CoworkerWorkspace({
   discussionTeammates,
   draft,
   listening,
+  voiceStatus,
+  voiceTranscribing,
   lastWorkflowArtifacts,
   messages,
   isThinking,
@@ -1793,7 +1839,7 @@ function CoworkerWorkspace({
           <div className="composer-input-row">
             <input
               value={draft}
-              disabled={!access.active || isThinking || attachmentLoading}
+              disabled={!access.active || isThinking || attachmentLoading || listening}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') sendMessage();
@@ -1806,10 +1852,11 @@ function CoworkerWorkspace({
                     : '说出现场信息、客户问题或报价想法...'
               }
             />
-            <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking || attachmentLoading}>
+            <button className="send-button" onClick={sendMessage} disabled={!access.active || isThinking || attachmentLoading || listening}>
               <Send size={18} />
             </button>
           </div>
+          {voiceStatus && <div className={`voice-status ${listening ? 'recording' : ''}`}>{voiceStatus}</div>}
           {attachments.length > 0 && (
             <div className="attachment-preview">
               {attachments.map((file) => (
@@ -1836,10 +1883,10 @@ function CoworkerWorkspace({
               }}
               onTouchEnd={stopVoice}
               onTouchCancel={stopVoice}
-              disabled={!access.active || isThinking || attachmentLoading}
+              disabled={!access.active || isThinking || attachmentLoading || voiceTranscribing}
             >
               <Mic size={20} />
-              {listening ? '松开结束' : '按住说话'}
+              {listening ? '松开结束并转文字' : '按住说话'}
             </button>
             <label className={`upload-button ${!access.active || isThinking || attachmentLoading ? 'disabled' : ''}`} htmlFor={uploadInputId}>
               <Paperclip size={18} />

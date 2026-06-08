@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:api": "node server/index.mjs",
+    "dev:cf": "wrangler dev",
     "build": "vite build",
+    "build:cf": "npm run build && wrangler deploy --dry-run",
     "crawl:tenders": "node scripts/crawl-tenders.mjs",
+    "deploy:cf": "npm run build && wrangler deploy",
     "preview": "vite preview --host 0.0.0.0",
     "start": "node server/index.mjs"
   },
@@ -24,5 +27,8 @@
     "react-dom": "^19.0.0",
     "typescript": "^5.8.0",
     "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.49.0"
   }
 }

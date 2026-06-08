@@ -1492,6 +1492,22 @@ h2 {
   gap: 8px;
 }
 
+.voice-status {
+  padding: 8px 10px;
+  border: 1px solid #dbe7ef;
+  border-radius: 8px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.voice-status.recording {
+  border-color: #fecaca;
+  color: #991b1b;
+  background: #fef2f2;
+}
+
 .mic-button,
 .send-button,
 .upload-button,

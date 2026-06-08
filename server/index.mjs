@@ -22,6 +22,8 @@ const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthro
 const ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || '2023-06-01';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions';
+const OPENAI_TRANSCRIPTION_URL = process.env.OPENAI_TRANSCRIPTION_URL || 'https://api.openai.com/v1/audio/transcriptions';
+const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_BACKUP_API_KEY = process.env.OPENROUTER_BACKUP_API_KEY || process.env.OPENROUTER_API_KEY_BACKUP || '';
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -1022,6 +1024,33 @@ app.post('/api/llm/proxy', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/speech/transcribe', requireAuth, async (req, res) => {
+  if (!OPENAI_API_KEY) {
+    return res.status(503).json({
+      error: 'openai_key_missing',
+      message: 'OPENAI_API_KEY 未配置，无法进行后端语音转文字。'
+    });
+  }
+  const audio = req.body?.audio ?? {};
+  const dataUrl = typeof audio.dataUrl === 'string' ? audio.dataUrl : '';
+  if (!dataUrl) return res.status(400).json({ error: 'audio_required', message: '缺少录音数据。' });
+  const { buffer, mime } = dataUrlToBuffer(dataUrl);
+  if (!buffer.length) return res.status(400).json({ error: 'audio_empty', message: '录音数据为空。' });
+  if (buffer.length > 10 * 1024 * 1024) {
+    return res.status(413).json({ error: 'audio_too_large', message: '单段语音过长，请控制在 90 秒以内。' });
+  }
+  try {
+    const text = await transcribeAudio({
+      buffer,
+      mime: audio.type || mime || 'audio/webm',
+      name: audio.name || 'voice.webm'
+    });
+    res.json({ text });
+  } catch (error) {
+    res.status(502).json({ error: 'transcription_failed', message: error.message });
+  }
+});
+
 app.get('/api/admin/model-health', requireAuth, requireJamie, async (req, res) => {
   const store = await readStore();
   const live = req.query.live === '1';
@@ -1564,6 +1593,41 @@ async function callOpenAI({ model, messages, temperature = 0.4, maxTokens = 900 
     }
   }
   throw new Error(lastError?.name === 'AbortError' ? `OpenAI timeout after ${OPENAI_TIMEOUT_MS}ms` : lastError?.message || 'OpenAI request failed');
+}
+
+async function transcribeAudio({ buffer, mime = 'audio/webm', name = 'voice.webm' }) {
+  const attempts = Math.max(1, OPENAI_RETRY_COUNT + 1);
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+    try {
+      const form = new FormData();
+      form.append('model', OPENAI_TRANSCRIPTION_MODEL);
+      form.append('language', 'zh');
+      form.append('file', new Blob([buffer], { type: mime }), name);
+      const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`
+        },
+        body: form
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error?.message || payload.message || `OpenAI transcription HTTP ${response.status}`);
+      }
+      return String(payload.text ?? '').trim();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      await sleep(400 * attempt);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error(lastError?.name === 'AbortError' ? `OpenAI transcription timeout after ${OPENAI_TIMEOUT_MS}ms` : lastError?.message || 'OpenAI transcription failed');
 }
 
 async function callOpenRouter({ provider = 'openrouter', model, messages, temperature = 0.4, maxTokens = 900 }) {

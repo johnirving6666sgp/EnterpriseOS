@@ -1,98 +1,144 @@
 # Cloudflare Deployment for timeconnector.net
 
-Domain: `timeconnector.net`
+EnterpriseOS now has a Cloudflare-native MVP path:
 
-## Recommended trial deployment
+- One Cloudflare Worker serves the React app and `/api/*`.
+- D1 stores the system state.
+- Cloudflare Secrets store model/API keys.
+- Cron can run the external opportunity Agent.
 
-For the first online trial with Jamie and Guihua, use a single Node deployment that serves both the React app and API. This keeps login simple because browser requests stay on the same origin.
+This lets `timeconnector.net` run without Render after the Worker is deployed and the custom domain is attached.
 
-Point Cloudflare DNS for `timeconnector.net` to the Node host after the service is healthy.
-
-## Split deployment for later hardening
-
-Because EnterpriseOS currently has a React frontend plus an Express backend, the safest MVP deployment is:
-
-- `timeconnector.net`: Cloudflare Pages for the React frontend
-- `api.timeconnector.net`: Node backend running on a server or Mac mini through Cloudflare Tunnel
-
-This keeps API keys, login sessions, token accounting, Obsidian sync, and file persistence on the backend.
-
-## Cloudflare Pages frontend
-
-Connect the GitHub repository:
-
-```text
-git@github.com:johnirving6666sgp/EnterpriseOS.git
-```
-
-Pages settings:
-
-```text
-Framework preset: Vite
-Build command: npm run build
-Build output directory: dist
-Root directory: /
-```
-
-Custom domain:
+## Architecture
 
 ```text
 timeconnector.net
+  -> Cloudflare Worker enterprise-os
+     -> Static assets from ./dist
+     -> API from ./worker/index.mjs
+     -> D1 binding DB
+     -> Secrets: OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
+```
+
+The current Worker keeps the data model intentionally simple: it stores the full EnterpriseOS state as one JSON document in D1 table `app_state`. This is the lowest-risk migration path for trial use. After the workflow stabilizes, split users, conversations, customers, tasks, quotes, broadcasts, and opportunities into proper D1 tables.
+
+## Local Cloudflare Test
+
+```bash
+npm install
+npm run build
+npm run dev:cf
+```
+
+Open:
+
+```text
+http://localhost:8787
+```
+
+If port 8787 is occupied:
+
+```bash
+npx wrangler dev --port 8788
+```
+
+## Deploy
+
+First run a dry run:
+
+```bash
+npm run build:cf
+```
+
+Then deploy:
+
+```bash
+npm run deploy:cf
+```
+
+Wrangler automatic provisioning can create the D1 database from `wrangler.jsonc` if no `database_id` exists yet. If you prefer manual creation:
+
+```bash
+npx wrangler d1 create enterprise-os-db
+```
+
+Then copy the returned `database_id` into `wrangler.jsonc`.
+
+Apply D1 migrations:
+
+```bash
+npx wrangler d1 migrations apply enterprise-os-db --remote
+```
+
+## Required Secrets
+
+Use Wrangler's interactive prompts. Do not paste keys into committed files.
+
+```bash
+npx wrangler secret put SESSION_SECRET
+npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put OPENROUTER_BACKUP_API_KEY
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put ANTHROPIC_API_KEY
+```
+
+Minimum for trial:
+
+- `SESSION_SECRET`
+- `OPENROUTER_API_KEY`
+- `OPENAI_API_KEY` for voice transcription
+
+Optional but recommended:
+
+- `OPENROUTER_BACKUP_API_KEY`
+- `ANTHROPIC_API_KEY` for direct Claude routing
+
+## Domain Binding
+
+In Cloudflare Dashboard:
+
+1. Go to **Workers & Pages**.
+2. Open Worker `enterprise-os`.
+3. Go to **Settings -> Domains & Routes**.
+4. Add custom domain:
+
+```text
+timeconnector.net
+```
+
+Optional:
+
+```text
 www.timeconnector.net
 ```
 
-## Backend option A: Cloudflare Tunnel to local/server Node app
+If `www` is used, redirect it to the apex domain for simplicity.
 
-Run the backend:
+## Test Checklist
+
+After deployment:
 
 ```bash
-cp .env.example .env
-npm install
-npm run build
-PORT=8787 npm start
+curl https://timeconnector.net/api/health
 ```
 
-Expose it behind:
+Expected:
 
-```text
-api.timeconnector.net -> http://localhost:8787
+```json
+{"ok":true,"app":"EnterpriseOS","runtime":"cloudflare-worker","storage":"d1"}
 ```
 
-Use this when the Obsidian vault lives on your Mac mini or internal server.
+Then test in browser:
 
-## Backend option B: Deploy Node backend to a server platform
+- Jamie login: `jamie / jamie-demo`
+- Coworker login: `larry / demo`, `luyang / demo`, etc.
+- Personal Agent chat
+- Task generation from chat
+- External opportunity Agent run
+- Voice transcription
 
-Deploy the same repo to a Node host and set:
+## Important Notes
 
-```text
-PORT
-SESSION_SECRET
-OBSIDIAN_VAULT
-ANTHROPIC_API_KEY
-OPENAI_API_KEY
-OPENROUTER_API_KEY
-```
-
-Then point:
-
-```text
-api.timeconnector.net -> backend host
-```
-
-## Later: Cloudflare-native backend
-
-To run everything Cloudflare-native, migrate the Express API to Cloudflare Workers and move persistence to:
-
-- D1 for relational state
-- R2 for files and exports
-- Workers KV for small config/session metadata
-
-This is a later hardening step. The current Express backend is faster for MVP iteration.
-
-## DNS checklist
-
-- Add `timeconnector.net` to Cloudflare Pages custom domains
-- Add `www.timeconnector.net` as an alias or redirect
-- Add `api.timeconnector.net` for the backend
-- Enforce HTTPS
-- Keep API keys only in backend environment variables
+- OpenRouter is for chat/model calls.
+- OpenAI key is required for `/api/speech/transcribe`.
+- The Worker is now the preferred deployment path; the Express server can remain for local fallback while the team trials the system.
