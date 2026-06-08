@@ -19,6 +19,14 @@ services:
         value: 604800000
       - key: INVITE_CODE
         generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_BACKUP_API_KEY
+        sync: false
     disk:
       name: enterprise-os-data
       mountPath: /var/data

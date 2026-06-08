@@ -17,6 +17,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-enterprise-os-secret';
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 7 * 24 * 60 * 60 * 1000);
 const INVITE_CODE = process.env.INVITE_CODE || 'team-test';
 const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || path.join(rootDir, 'vault', 'enterprise-os');
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || '2023-06-01';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
@@ -27,8 +30,11 @@ const OPENROUTER_APP_NAME = process.env.OPENROUTER_APP_NAME || 'EnterpriseOS';
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || 30000);
 const OPENROUTER_RETRY_COUNT = Number(process.env.OPENROUTER_RETRY_COUNT || 1);
 const OPENROUTER_HAS_ANY_KEY = Boolean(OPENROUTER_API_KEY || OPENROUTER_BACKUP_API_KEY);
+const ANTHROPIC_HAS_ANY_KEY = Boolean(ANTHROPIC_API_KEY || OPENROUTER_HAS_ANY_KEY);
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || OPENROUTER_TIMEOUT_MS);
 const OPENAI_RETRY_COUNT = Number(process.env.OPENAI_RETRY_COUNT || OPENROUTER_RETRY_COUNT);
+const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || OPENROUTER_TIMEOUT_MS);
+const ANTHROPIC_RETRY_COUNT = Number(process.env.ANTHROPIC_RETRY_COUNT || OPENROUTER_RETRY_COUNT);
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
 const fixedSystemAgentIds = ['external', 'customer', 'task', 'quote', 'internal'];
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
@@ -997,7 +1003,7 @@ app.post('/api/llm/proxy', requireAuth, async (req, res) => {
   const { provider, apiModel, messages = [] } = req.body ?? {};
   const prompt = messages.map((item) => item.content).join('\n');
   if (!keyConfiguredForProvider(provider)) {
-    const simulatedReply = `${providerBackend(provider) === 'openai' ? 'OpenAI API key' : 'OpenRouter API key'} 尚未配置。已收到 ${provider}/${apiModel} 请求，但当前只能返回本地降级回复。`;
+    const simulatedReply = `${missingKeyMessage(provider)} 已收到 ${provider}/${apiModel} 请求，但当前只能返回本地降级回复。`;
     const usage = calculateUsage(prompt, simulatedReply, 'balanced');
     return res.json({ provider, apiModel, reply: simulatedReply, usage, simulated: true });
   }
@@ -1012,7 +1018,7 @@ app.post('/api/llm/proxy', requireAuth, async (req, res) => {
     const usage = calculateUsage(prompt, result.reply, 'balanced');
     res.json({ provider: result.backend, apiModel: result.model, keySlot: result.keySlot, reply: result.reply, usage, simulated: false });
   } catch (error) {
-    res.status(502).json({ error: 'openrouter_failed', detail: error.message });
+    res.status(502).json({ error: 'model_call_failed', detail: error.message });
   }
 });
 
@@ -1071,11 +1077,14 @@ app.get('/api/admin/model-health', requireAuth, requireJamie, async (req, res) =
   }
 
   res.json({
+    anthropicConfigured: Boolean(ANTHROPIC_API_KEY),
     openAIConfigured: Boolean(OPENAI_API_KEY),
     openRouterConfigured: OPENROUTER_HAS_ANY_KEY,
     primaryOpenRouterConfigured: Boolean(OPENROUTER_API_KEY),
     backupOpenRouterConfigured: Boolean(OPENROUTER_BACKUP_API_KEY),
     live,
+    anthropicTimeoutMs: ANTHROPIC_TIMEOUT_MS,
+    anthropicRetryCount: ANTHROPIC_RETRY_COUNT,
     openRouterTimeoutMs: OPENROUTER_TIMEOUT_MS,
     openRouterRetryCount: OPENROUTER_RETRY_COUNT,
     openAITimeoutMs: OPENAI_TIMEOUT_MS,
@@ -1242,9 +1251,13 @@ function toOpenRouterModel(apiModel = '') {
   const clean = String(apiModel).replace(/^(openrouter\/)+/, '');
   const modelMap = {
     'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
+    'claude-3-5-haiku-20241022': 'anthropic/claude-3.5-haiku',
     'claude-3-7-sonnet': 'anthropic/claude-3.7-sonnet',
+    'claude-3-7-sonnet-20250219': 'anthropic/claude-3.7-sonnet',
     'claude-sonnet-4': 'anthropic/claude-sonnet-4',
+    'claude-sonnet-4-20250514': 'anthropic/claude-sonnet-4',
     'claude-opus-4': 'anthropic/claude-opus-4',
+    'claude-opus-4-20250514': 'anthropic/claude-opus-4',
     'claude-opus-4.1': 'anthropic/claude-opus-4.1',
     'gpt-4.1-mini': 'openai/gpt-4.1-mini',
     'gpt-4.1': 'openai/gpt-4.1',
@@ -1254,6 +1267,24 @@ function toOpenRouterModel(apiModel = '') {
   return modelMap[clean] ?? clean ?? 'anthropic/claude-3.5-haiku';
 }
 
+function toAnthropicModel(apiModel = '') {
+  const clean = String(apiModel || 'claude-3-5-haiku')
+    .replace(/^(anthropic\/|openrouter\/anthropic\/)+/, '')
+    .replace(/\./g, '-')
+    .trim();
+  const modelMap = {
+    'claude-3-5-haiku': 'claude-3-5-haiku-20241022',
+    'claude-3-5-haiku-20241022': 'claude-3-5-haiku-20241022',
+    'claude-3-7-sonnet': 'claude-3-7-sonnet-20250219',
+    'claude-3-7-sonnet-20250219': 'claude-3-7-sonnet-20250219',
+    'claude-sonnet-4': 'claude-sonnet-4-20250514',
+    'claude-sonnet-4-20250514': 'claude-sonnet-4-20250514',
+    'claude-opus-4': 'claude-opus-4-20250514',
+    'claude-opus-4-20250514': 'claude-opus-4-20250514'
+  };
+  return modelMap[clean] ?? clean ?? 'claude-3-5-haiku-20241022';
+}
+
 function toOpenAIModel(apiModel = '') {
   return String(apiModel || 'gpt-4.1-mini')
     .replace(/^(openai\/|openrouter\/openai\/)+/, '')
@@ -1261,11 +1292,16 @@ function toOpenAIModel(apiModel = '') {
 }
 
 function providerBackend(provider = '') {
-  return provider === 'openai' || provider === 'gpt' ? 'openai' : 'openrouter';
+  if (provider === 'openai' || provider === 'gpt') return 'openai';
+  if (provider === 'claude' || provider === 'anthropic') return 'anthropic';
+  return 'openrouter';
 }
 
 function normalizeModelForProvider(provider, apiModel) {
-  return providerBackend(provider) === 'openai' ? toOpenAIModel(apiModel) : toOpenRouterModel(apiModel);
+  const backend = providerBackend(provider);
+  if (backend === 'openai') return toOpenAIModel(apiModel);
+  if (backend === 'anthropic') return toAnthropicModel(apiModel);
+  return toOpenRouterModel(apiModel);
 }
 
 function collectModelRoutes(store) {
@@ -1315,18 +1351,24 @@ function uniqueModelRoutes(routes = []) {
 }
 
 function keyPreferenceForProvider(provider = '') {
-  if (providerBackend(provider) === 'openai') return 'openai-direct';
+  const backend = providerBackend(provider);
+  if (backend === 'openai') return 'openai-direct';
+  if (backend === 'anthropic') return ANTHROPIC_API_KEY ? 'anthropic-direct' : 'openrouter-fallback';
   return provider === 'openrouter-backup' ? 'backup-first' : 'primary-first';
 }
 
 function keyConfiguredForProvider(provider = '') {
-  return providerBackend(provider) === 'openai' ? Boolean(OPENAI_API_KEY) : OPENROUTER_HAS_ANY_KEY;
+  const backend = providerBackend(provider);
+  if (backend === 'openai') return Boolean(OPENAI_API_KEY);
+  if (backend === 'anthropic') return ANTHROPIC_HAS_ANY_KEY;
+  return OPENROUTER_HAS_ANY_KEY;
 }
 
 function missingKeyMessage(provider = '') {
-  return providerBackend(provider) === 'openai'
-    ? 'OPENAI_API_KEY 未配置，无法进行 OpenAI 直连模型检查。'
-    : 'OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY 都未配置，无法进行 OpenRouter 模型检查。';
+  const backend = providerBackend(provider);
+  if (backend === 'openai') return 'OPENAI_API_KEY 未配置，无法进行 OpenAI 直连模型检查。';
+  if (backend === 'anthropic') return 'ANTHROPIC_API_KEY 未配置，且 OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY 也未配置，无法调用 Claude 模型。';
+  return 'OPENROUTER_API_KEY / OPENROUTER_BACKUP_API_KEY 都未配置，无法进行 OpenRouter 模型检查。';
 }
 
 function openRouterKeyCandidates(provider = '') {
@@ -1389,8 +1431,8 @@ async function generateAgentReply({ store, agent, user, message }) {
     };
   } catch (error) {
     return {
-      reply: `${fallbackAgentReply({ agent, user, message })}\n\n（OpenRouter 调用失败，已使用本地降级回复：${error.message}）`,
-      llm: { ...llmUnavailable('openrouter_error'), model, error: error.message }
+      reply: `${fallbackAgentReply({ agent, user, message })}\n\n（模型调用失败，已使用本地降级回复：${error.message}）`,
+      llm: { ...llmUnavailable('model_call_error', agent.provider), model, error: error.message }
     };
   }
 }
@@ -1408,9 +1450,80 @@ function getPersonalAgentRoleInstruction(userId) {
 }
 
 async function callModel({ provider = 'openrouter', model, messages, temperature = 0.4, maxTokens = 900 }) {
-  return providerBackend(provider) === 'openai'
-    ? callOpenAI({ model, messages, temperature, maxTokens })
-    : callOpenRouter({ provider, model, messages, temperature, maxTokens });
+  const backend = providerBackend(provider);
+  if (backend === 'openai') return callOpenAI({ model, messages, temperature, maxTokens });
+  if (backend === 'anthropic') return callClaude({ provider, model, messages, temperature, maxTokens });
+  return callOpenRouter({ provider, model, messages, temperature, maxTokens });
+}
+
+async function callClaude({ provider = 'claude', model, messages, temperature = 0.4, maxTokens = 900 }) {
+  if (ANTHROPIC_API_KEY) {
+    return callAnthropic({ model, messages, temperature, maxTokens });
+  }
+  return callOpenRouter({
+    provider,
+    model: toOpenRouterModel(model),
+    messages,
+    temperature,
+    maxTokens
+  });
+}
+
+async function callAnthropic({ model, messages, temperature = 0.4, maxTokens = 900 }) {
+  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
+  const attempts = Math.max(1, ANTHROPIC_RETRY_COUNT + 1);
+  const system = messages
+    .filter((item) => item.role === 'system')
+    .map((item) => item.content)
+    .join('\n\n');
+  const anthropicMessages = messages
+    .filter((item) => item.role !== 'system')
+    .map((item) => ({
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: String(item.content ?? '')
+    }))
+    .filter((item) => item.content.trim());
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+    try {
+      const response = await fetch(ANTHROPIC_BASE_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': ANTHROPIC_VERSION,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(compact({
+          model,
+          system,
+          messages: anthropicMessages.length ? anthropicMessages : [{ role: 'user', content: '请回复 OK。' }],
+          temperature,
+          max_tokens: maxTokens
+        }))
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error?.message || payload.message || `Anthropic HTTP ${response.status}`);
+      }
+      const reply = (payload.content ?? [])
+        .filter((item) => item.type === 'text' && item.text)
+        .map((item) => item.text)
+        .join('\n')
+        .trim();
+      if (!reply) throw new Error('Anthropic returned an empty reply');
+      return { reply, model: payload.model ?? model, backend: 'anthropic', keySlot: 'anthropic' };
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      await sleep(400 * attempt);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error(lastError?.name === 'AbortError' ? `Anthropic timeout after ${ANTHROPIC_TIMEOUT_MS}ms` : lastError?.message || 'Anthropic request failed');
 }
 
 async function callOpenAI({ model, messages, temperature = 0.4, maxTokens = 900 }) {
@@ -1600,7 +1713,7 @@ async function runSystemAgent({ id, store, systemAgent }) {
   } catch (error) {
     return {
       output: fallbackSystemAgentOutput(id, error.message, tenderSignals),
-      llm: { ...llmUnavailable('openrouter_error'), model, error: error.message }
+      llm: { ...llmUnavailable('model_call_error', systemAgent.provider), model, error: error.message }
     };
   }
 }
