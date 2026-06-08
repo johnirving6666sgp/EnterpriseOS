@@ -46,7 +46,7 @@ const modelOptions = [
     id: 'balanced',
     label: '均衡模型',
     short: 'Sonnet',
-    apiModel: 'claude-3-7-sonnet',
+    apiModel: 'claude-sonnet-4',
     inputPer1k: 0.003,
     outputPer1k: 0.015
   },
@@ -64,7 +64,7 @@ const providerOptions = [
   {
     id: 'claude',
     label: 'Claude',
-    models: ['claude-3-5-haiku', 'claude-3-7-sonnet', 'claude-opus-4']
+    models: ['claude-3-5-haiku', 'claude-sonnet-4', 'claude-opus-4']
   },
   {
     id: 'openai',
@@ -79,7 +79,7 @@ const providerOptions = [
   {
     id: 'openrouter-backup',
     label: 'OpenRouter 备用',
-    models: ['openrouter/openai/gpt-4.1-mini', 'openrouter/openai/gpt-4.1', 'openrouter/anthropic/claude-3.5-haiku', 'openrouter/anthropic/claude-3.7-sonnet']
+    models: ['openrouter/openai/gpt-4.1-mini', 'openrouter/openai/gpt-4.1', 'openrouter/anthropic/claude-3.5-haiku', 'openrouter/anthropic/claude-sonnet-4']
   }
 ];
 
@@ -113,7 +113,7 @@ const systemAgents = [
     name: '报价 Agent',
     job: '生成报价方案、报价构成、参考依据、缺失参数和风险',
     defaultProvider: 'claude',
-    defaultModel: 'claude-3-7-sonnet',
+    defaultModel: 'claude-sonnet-4',
     reason: '报价需要稳妥、结构化和可审批，默认使用 Claude 均衡模型；关键客户报价可临时升 Claude 强模型。'
   },
   {
@@ -163,7 +163,7 @@ const recommendedSystemRoutes = {
   internal: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   task: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-  quote: { provider: 'claude', apiModel: 'claude-3-7-sonnet' },
+  quote: { provider: 'claude', apiModel: 'claude-sonnet-4' },
   customer: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }
 };
 

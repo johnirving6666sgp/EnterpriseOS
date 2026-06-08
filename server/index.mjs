@@ -70,12 +70,12 @@ const defaultAgents = {
   jamie: { id: 'jamie', name: 'Jamie_AI', ownerId: 'jamie', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
   larry: { id: 'larry', name: 'Larry_AI', ownerId: 'larry', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
   gu: { id: 'gu', name: 'Gu_AI', ownerId: 'gu', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
-  xiaodong: { id: 'xiaodong', name: 'Xiaodong_AI', ownerId: 'xiaodong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
+  xiaodong: { id: 'xiaodong', name: 'Xiaodong_AI', ownerId: 'xiaodong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-sonnet-4', active: true },
   heli: { id: 'heli', name: 'Heli_AI', ownerId: 'heli', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
   guihua: { id: 'guihua', name: 'Guihua_AI', ownerId: 'guihua', modelTier: 'lite', provider: 'claude', apiModel: 'claude-3-5-haiku', active: true },
   zhiping: { id: 'zhiping', name: 'Zhiping_AI', ownerId: 'zhiping', modelTier: 'strong', provider: 'claude', apiModel: 'claude-opus-4', active: true },
-  luyang: { id: 'luyang', name: 'Luyang_AI', ownerId: 'luyang', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true },
-  kingsong: { id: 'kingsong', name: 'Kingsong_AI', ownerId: 'kingsong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-3-7-sonnet', active: true }
+  luyang: { id: 'luyang', name: 'Luyang_AI', ownerId: 'luyang', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-sonnet-4', active: true },
+  kingsong: { id: 'kingsong', name: 'Kingsong_AI', ownerId: 'kingsong', modelTier: 'balanced', provider: 'claude', apiModel: 'claude-sonnet-4', active: true }
 };
 
 const defaultTasks = [
@@ -121,7 +121,7 @@ const seed = {
       scope: '生成报价方案、报价构成、参考依据、缺失参数和风险。',
       boundary: '不承诺正式对外价格、不管理客户阶段、不扫描外部线索。',
       provider: 'claude',
-      apiModel: 'claude-3-7-sonnet',
+      apiModel: 'claude-sonnet-4',
       ownerId: WORKFLOW_OWNER_ID
     },
     internal: {
@@ -1252,8 +1252,8 @@ function toOpenRouterModel(apiModel = '') {
   const modelMap = {
     'claude-3-5-haiku': 'anthropic/claude-3.5-haiku',
     'claude-3-5-haiku-20241022': 'anthropic/claude-3.5-haiku',
-    'claude-3-7-sonnet': 'anthropic/claude-3.7-sonnet',
-    'claude-3-7-sonnet-20250219': 'anthropic/claude-3.7-sonnet',
+    'claude-3-7-sonnet': 'anthropic/claude-sonnet-4',
+    'claude-3-7-sonnet-20250219': 'anthropic/claude-sonnet-4',
     'claude-sonnet-4': 'anthropic/claude-sonnet-4',
     'claude-sonnet-4-20250514': 'anthropic/claude-sonnet-4',
     'claude-opus-4': 'anthropic/claude-opus-4',
