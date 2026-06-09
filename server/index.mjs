@@ -728,8 +728,8 @@ app.post('/api/system-agents/:id/run', requireAuth, async (req, res) => {
     store.generatedOpportunities.unshift(generated.output.opportunity);
     store.generatedOpportunities = store.generatedOpportunities.slice(0, 18);
   }
-  const createdTasks = persistSystemAgentArtifacts(store, id, generated.output, req.session.userId);
-  const broadcast = createSystemAgentBroadcast(store, req.session.userId, generated.output);
+  const createdTasks = id === 'external' ? [] : persistSystemAgentArtifacts(store, id, generated.output, req.session.userId);
+  const broadcast = id === 'external' ? null : createSystemAgentBroadcast(store, req.session.userId, generated.output);
   recordAudit(store, req.session.userId, 'system-agent.run', { id, llm: generated.llm, broadcastId: broadcast?.id });
   await writeStore(store);
   res.json({ output: generated.output, llm: generated.llm, systemAgent, broadcast, createdTasks, quotes: store.quotes ?? [], customers: store.customers ?? [] });

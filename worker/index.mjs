@@ -421,8 +421,8 @@ async function runSystemAgentRoute(env, session, id) {
   store.systemAgentOutputs[id].unshift(output);
   store.systemAgentOutputs[id] = store.systemAgentOutputs[id].slice(0, 12);
   if (id === 'external' && output.opportunity) upsertById(store.generatedOpportunities, output.opportunity);
-  const createdTasks = persistSystemAgentArtifacts(store, id, output, session.userId);
-  const broadcast = createSystemAgentBroadcast(store, session.userId, output);
+  const createdTasks = id === 'external' ? [] : persistSystemAgentArtifacts(store, id, output, session.userId);
+  const broadcast = id === 'external' ? null : createSystemAgentBroadcast(store, session.userId, output);
   audit(store, session.userId, 'system-agent.run', { id, broadcastId: broadcast?.id });
   await writeStore(env, store);
   return json({ output, llm: output.llm ?? { simulated: true }, systemAgent: store.systemAgents[id], broadcast, createdTasks, quotes: visibleQuotes(store, session), customers: visibleCustomers(store, session) });
