@@ -10,6 +10,7 @@
     "build": "vite build",
     "build:cf": "npm run build && wrangler deploy --dry-run",
     "crawl:tenders": "node scripts/crawl-tenders.mjs",
+    "crawl:tender-details": "node scripts/crawl-tender-details.mjs",
     "deploy:cf": "npm run build && wrangler deploy",
     "preview": "vite preview --host 0.0.0.0",
     "start": "node server/index.mjs"

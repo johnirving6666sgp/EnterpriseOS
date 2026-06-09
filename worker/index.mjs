@@ -179,6 +179,7 @@ async function routeApi(request, env, url) {
   if (method === 'POST' && match(path, /^\/api\/system-agents\/([^/]+)\/route$/)) return updateSystemAgentRoute(request, env, session, RegExp.$1);
   if (method === 'POST' && match(path, /^\/api\/system-agents\/([^/]+)\/run$/)) return runSystemAgentRoute(env, session, RegExp.$1);
   if (method === 'POST' && match(path, /^\/api\/opportunities\/([^/]+)\/save$/)) return saveOpportunity(request, env, session, RegExp.$1);
+  if (method === 'POST' && path === '/api/opportunities/details') return updateOpportunityDetails(request, env, session);
   if (method === 'POST' && path === '/api/broadcasts') return createBroadcast(request, env, session);
   if (method === 'POST' && match(path, /^\/api\/broadcasts\/([^/]+)\/feedback$/)) return broadcastFeedback(request, env, session, RegExp.$1);
   if (method === 'POST' && path === '/api/tasks') return createTask(request, env, session);
@@ -446,6 +447,40 @@ async function saveOpportunity(request, env, session, id) {
     systemAgentOutputs: store.systemAgentOutputs,
     createdArtifacts: artifacts
   });
+}
+
+async function updateOpportunityDetails(request, env, session) {
+  if (session.role !== 'super_admin') return json({ error: 'jamie_only' }, 403);
+  const { opportunities = [] } = await readBody(request);
+  if (!Array.isArray(opportunities) || !opportunities.length) return json({ error: 'opportunities_required' }, 400);
+
+  const store = await ensureStore(env);
+  store.generatedOpportunities ??= [];
+  let updated = 0;
+  let inserted = 0;
+  const now = new Date().toISOString();
+
+  for (const raw of opportunities.slice(0, 100)) {
+    if (!raw?.id) continue;
+    const item = compact({
+      ...raw,
+      detailUpdatedAt: now,
+      detailStatus: raw.detailStatus || 'detail_fetched'
+    });
+    const index = store.generatedOpportunities.findIndex((existing) => existing.id === item.id);
+    if (index >= 0) {
+      store.generatedOpportunities[index] = compact({ ...store.generatedOpportunities[index], ...item });
+      updated += 1;
+    } else {
+      store.generatedOpportunities.unshift(item);
+      inserted += 1;
+    }
+  }
+
+  store.generatedOpportunities = store.generatedOpportunities.slice(0, 120);
+  audit(store, session.userId, 'opportunity.details.updated', { updated, inserted });
+  await writeStore(env, store);
+  return json({ updated, inserted, generatedOpportunities: store.generatedOpportunities });
 }
 
 async function createBroadcast(request, env, session) {

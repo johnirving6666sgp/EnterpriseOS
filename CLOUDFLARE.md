@@ -142,3 +142,4 @@ Then test in browser:
 - OpenRouter is for chat/model calls.
 - OpenAI key is required for `/api/speech/transcribe`.
 - The Worker is now the preferred deployment path; the Express server can remain for local fallback while the team trials the system.
+- 招标详情正文不建议塞进 Worker 定时任务里硬抓。优先用独立 Node 爬虫 `npm run crawl:tender-details` 在 Mac mini、GitHub Actions、Render Cron 或其他定时环境运行，再通过 `/api/opportunities/details` 回写到 Cloudflare Worker。

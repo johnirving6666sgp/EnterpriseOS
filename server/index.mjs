@@ -798,6 +798,41 @@ app.post('/api/opportunities/:id/save', requireAuth, async (req, res) => {
   });
 });
 
+app.post('/api/opportunities/details', requireAuth, requireJamie, async (req, res) => {
+  const { opportunities = [] } = req.body ?? {};
+  if (!Array.isArray(opportunities) || !opportunities.length) {
+    return res.status(400).json({ error: 'opportunities_required' });
+  }
+
+  const store = await readStore();
+  store.generatedOpportunities ??= [];
+  let updated = 0;
+  let inserted = 0;
+  const now = new Date().toISOString();
+
+  for (const raw of opportunities.slice(0, 100)) {
+    if (!raw?.id) continue;
+    const item = compact({
+      ...raw,
+      detailUpdatedAt: now,
+      detailStatus: raw.detailStatus || 'detail_fetched'
+    });
+    const index = store.generatedOpportunities.findIndex((existing) => existing.id === item.id);
+    if (index >= 0) {
+      store.generatedOpportunities[index] = compact({ ...store.generatedOpportunities[index], ...item });
+      updated += 1;
+    } else {
+      store.generatedOpportunities.unshift(item);
+      inserted += 1;
+    }
+  }
+
+  store.generatedOpportunities = store.generatedOpportunities.slice(0, 120);
+  recordAudit(store, req.session.userId, 'opportunity.details.updated', { updated, inserted });
+  await writeStore(store);
+  res.json({ updated, inserted, generatedOpportunities: store.generatedOpportunities });
+});
+
 app.post('/api/broadcasts', requireAuth, requireJamie, async (req, res) => {
   const { type, title, content, recipients } = req.body ?? {};
   if (!title || !content || !Array.isArray(recipients) || !recipients.length) {

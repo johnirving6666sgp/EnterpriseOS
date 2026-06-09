@@ -146,6 +146,34 @@ npm run crawl:tenders
 
 招标来源配置在 `config/tender-sources.json`。以后增加类似网站时，优先新增一条 source 配置；如果页面结构不同，再在 `server/tender-scanner.mjs` 中增加一个 adapter。扫描器会记录 `seenIds` 和最近扫描日志，用于识别新发现、去重和排查失败来源。
 
+### 招标详情正文爬虫
+
+线索池里只有标题时，单独运行详情正文爬虫来补齐招标单位、代理机构、预算、截止时间、联系人和正文摘要：
+
+```bash
+npm run crawl:tender-details -- --limit=30
+```
+
+默认读取 `data/store.json` 里的 `generatedOpportunities`，输出到 `data/tender-details/`。如果先跑了招标线索扫描，也可以指定扫描结果：
+
+```bash
+npm run crawl:tender-details -- --input=data/tender-opportunities/tender-opportunities-YYYY-MM-DD.json
+```
+
+回写本地试用数据：
+
+```bash
+npm run crawl:tender-details -- --write-store
+```
+
+同步到线上 `timeconnector.net`：
+
+```bash
+ENTERPRISE_OS_PASSWORD=jamie-demo npm run crawl:tender-details -- --sync-api=https://timeconnector.net --user=jamie
+```
+
+这个脚本是独立爬虫服务的第一版，专门负责详情页正文提取；外部机会 Agent 仍负责发现和评分。遇到必须浏览器渲染或反爬的网站时，后续再给这个服务加 Playwright 渲染层。
+
 ## Auth
 
 - 登录 token 默认 7 天过期，可用 `SESSION_TTL_MS` 调整。
