@@ -382,7 +382,15 @@ function EnterpriseApp({ auth, onLogout }) {
     Object.fromEntries(teammates.map((item) => [item.id, { active: true, ownerName: item.name }]))
   );
   const mediaRecorderRef = useRef(null);
+  const voiceRecorderModeRef = useRef('');
   const voiceChunksRef = useRef([]);
+  const audioStreamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const audioProcessorRef = useRef(null);
+  const audioSourceRef = useRef(null);
+  const audioGainRef = useRef(null);
+  const wavSamplesRef = useRef([]);
+  const wavSampleRateRef = useRef(16000);
   const voiceStartedAtRef = useRef(0);
   const voicePressedRef = useRef(false);
   const voiceStopTimerRef = useRef(null);
@@ -684,7 +692,7 @@ function EnterpriseApp({ auth, onLogout }) {
   };
 
   const getRecorderOptions = () => {
-    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac'];
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
     const mimeType = candidates.find((type) => {
       try {
         return MediaRecorder.isTypeSupported(type);
@@ -695,12 +703,74 @@ function EnterpriseApp({ auth, onLogout }) {
     return mimeType ? { mimeType } : undefined;
   };
 
+  const shouldUseWavRecorder = () => {
+    const ua = navigator.userAgent || '';
+    const isAppleMobile = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    return isAppleMobile || !window.MediaRecorder;
+  };
+
+  const mergeAudioSamples = (chunks) => {
+    const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const samples = new Float32Array(length);
+    let offset = 0;
+    chunks.forEach((chunk) => {
+      samples.set(chunk, offset);
+      offset += chunk.length;
+    });
+    return samples;
+  };
+
+  const encodeWav = (samples, sampleRate) => {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    const writeString = (offset, value) => {
+      for (let index = 0; index < value.length; index += 1) {
+        view.setUint8(offset + index, value.charCodeAt(index));
+      }
+    };
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    let offset = 44;
+    for (let index = 0; index < samples.length; index += 1, offset += 2) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Blob([view], { type: 'audio/wav' });
+  };
+
+  const cleanupWavRecorder = () => {
+    audioProcessorRef.current?.disconnect();
+    audioSourceRef.current?.disconnect();
+    audioGainRef.current?.disconnect();
+    audioProcessorRef.current = null;
+    audioSourceRef.current = null;
+    audioGainRef.current = null;
+    audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+    if (context?.state !== 'closed') {
+      context?.close?.().catch(() => {});
+    }
+  };
+
   const transcribeVoiceBlob = async (blob) => {
     setVoiceTranscribing(true);
     setVoiceStatus('正在转文字...');
     try {
       const dataUrl = await readFileAsDataUrl(blob);
-      const extension = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('aac') ? 'aac' : 'webm';
+      const extension = blob.type.includes('wav') ? 'wav' : blob.type.includes('mp4') ? 'mp4' : 'webm';
       const response = await apiFetch('/api/speech/transcribe', {
         method: 'POST',
         body: JSON.stringify({
@@ -717,10 +787,10 @@ function EnterpriseApp({ auth, onLogout }) {
       appendVoiceText(payload.text);
       setVoiceStatus(payload.text ? '转写完成，请确认后发送。' : '没有识别到有效语音。');
     } catch (error) {
-      setVoiceStatus(`语音转写失败：${error.message}`);
+      setVoiceStatus(`语音转文字失败：${error.message}。可先用文字输入。`);
     } finally {
       setVoiceTranscribing(false);
-      window.setTimeout(() => setVoiceStatus(''), 3600);
+      window.setTimeout(() => setVoiceStatus(''), 5200);
     }
   };
 
@@ -745,21 +815,60 @@ function EnterpriseApp({ auth, onLogout }) {
 
   const startVoice = async (clientY = 0) => {
     if (!access.active || voicePressedRef.current || listening || voiceTranscribing) return;
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       setVoiceStatus('当前浏览器不支持录音，请改用文字输入或上传音频。');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorderOptions = getRecorderOptions();
-      const recorder = recorderOptions ? new MediaRecorder(stream, recorderOptions) : new MediaRecorder(stream);
-      voiceChunksRef.current = [];
       voicePressedRef.current = true;
       voiceCancelRef.current = false;
       voiceStopReasonRef.current = 'send';
       voiceStartYRef.current = clientY;
       voiceStartedAtRef.current = Date.now();
+      setListening(true);
+      setVoiceDuration(0);
+      setVoiceStatus('正在说话，松开转文字');
+      voiceTimerRef.current = window.setInterval(() => {
+        setVoiceDuration(Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
+      }, 250);
+      voiceStopTimerRef.current = window.setTimeout(() => {
+        if (voicePressedRef.current) stopVoice();
+      }, 90000);
+
+      if (shouldUseWavRecorder()) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) throw new Error('当前浏览器不支持稳定录音');
+        const context = new AudioContextClass();
+        await context.resume?.();
+        const source = context.createMediaStreamSource(stream);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        const gain = context.createGain();
+        gain.gain.value = 0;
+        wavSamplesRef.current = [];
+        wavSampleRateRef.current = context.sampleRate || 44100;
+        processor.onaudioprocess = (event) => {
+          if (!voicePressedRef.current) return;
+          const input = event.inputBuffer.getChannelData(0);
+          wavSamplesRef.current.push(new Float32Array(input));
+        };
+        source.connect(processor);
+        processor.connect(gain);
+        gain.connect(context.destination);
+        audioStreamRef.current = stream;
+        audioContextRef.current = context;
+        audioSourceRef.current = source;
+        audioProcessorRef.current = processor;
+        audioGainRef.current = gain;
+        voiceRecorderModeRef.current = 'wav';
+        return;
+      }
+
+      const recorderOptions = getRecorderOptions();
+      const recorder = recorderOptions ? new MediaRecorder(stream, recorderOptions) : new MediaRecorder(stream);
+      voiceChunksRef.current = [];
       mediaRecorderRef.current = recorder;
+      voiceRecorderModeRef.current = 'media';
       recorder.ondataavailable = (event) => {
         if (event.data?.size) voiceChunksRef.current.push(event.data);
       };
@@ -799,19 +908,11 @@ function EnterpriseApp({ auth, onLogout }) {
         }, 120);
       };
       recorder.start(250);
-      setListening(true);
-      setVoiceDuration(0);
-      setVoiceStatus('正在说话，松开转文字');
-      voiceTimerRef.current = window.setInterval(() => {
-        setVoiceDuration(Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
-      }, 250);
-      voiceStopTimerRef.current = window.setTimeout(() => {
-        if (voicePressedRef.current) stopVoice();
-      }, 90000);
     } catch (error) {
       voicePressedRef.current = false;
       setListening(false);
       setVoiceCanceling(false);
+      cleanupWavRecorder();
       clearVoiceTimers();
       setVoiceStatus(error.name === 'NotAllowedError' ? '麦克风权限被拒绝，请在浏览器里允许麦克风。' : `无法开始录音：${error.message}`);
     }
@@ -826,6 +927,37 @@ function EnterpriseApp({ auth, onLogout }) {
     if (!voicePressedRef.current && !listening) return;
     voicePressedRef.current = false;
     clearVoiceTimers();
+    if (voiceRecorderModeRef.current === 'wav') {
+      const durationMs = Date.now() - voiceStartedAtRef.current;
+      const shouldCancel = cancel || voiceCancelRef.current;
+      const stopReason = shouldCancel ? 'cancel' : durationMs < 700 ? 'short' : 'send';
+      const sampleRate = wavSampleRateRef.current;
+      const samples = mergeAudioSamples(wavSamplesRef.current);
+      wavSamplesRef.current = [];
+      voiceRecorderModeRef.current = '';
+      cleanupWavRecorder();
+      setListening(false);
+      setVoiceCanceling(false);
+      setVoiceDuration(0);
+      if (stopReason === 'cancel') {
+        setVoiceStatus('已取消');
+        window.setTimeout(() => setVoiceStatus(''), 1600);
+        return;
+      }
+      if (stopReason === 'short') {
+        setVoiceStatus('说话时间太短');
+        window.setTimeout(() => setVoiceStatus(''), 1800);
+        return;
+      }
+      if (!samples.length) {
+        setVoiceStatus('没有录到声音，请确认麦克风权限后重试。');
+        window.setTimeout(() => setVoiceStatus(''), 3200);
+        return;
+      }
+      setVoiceStatus('正在转文字...');
+      transcribeVoiceBlob(encodeWav(samples, sampleRate));
+      return;
+    }
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       const durationMs = Date.now() - voiceStartedAtRef.current;

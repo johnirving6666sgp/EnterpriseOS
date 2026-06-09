@@ -577,7 +577,7 @@ async function speechTranscribe(request, env) {
   const form = new FormData();
   form.append('model', env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1');
   form.append('language', 'zh');
-  form.append('file', parsed.blob, audio.name || `voice-${Date.now()}.webm`);
+  form.append('file', parsed.blob, safeAudioFileName(audio.name, parsed.mime));
   const response = await fetch(env.OPENAI_TRANSCRIPTION_URL || OPENAI_TRANSCRIPTION_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -586,6 +586,26 @@ async function speechTranscribe(request, env) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) return json({ error: 'transcription_failed', message: payload.error?.message || `OpenAI transcription HTTP ${response.status}` }, 502);
   return json({ text: String(payload.text ?? '').trim() });
+}
+
+function safeAudioFileName(name, mime) {
+  const extension = audioExtensionFromMime(mime);
+  const raw = typeof name === 'string' ? name.trim() : '';
+  const match = raw.match(/\.([a-z0-9]+)$/i);
+  const allowed = new Set(['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']);
+  if (raw && match && allowed.has(match[1].toLowerCase()) && raw.length < 120) return raw.replace(/[^\w.\-]/g, '_');
+  return `voice-${Date.now()}.${extension}`;
+}
+
+function audioExtensionFromMime(mime = '') {
+  const value = mime.toLowerCase();
+  if (value.includes('wav')) return 'wav';
+  if (value.includes('mp4')) return 'mp4';
+  if (value.includes('aac')) return 'm4a';
+  if (value.includes('mpeg')) return 'mp3';
+  if (value.includes('ogg') || value.includes('oga')) return 'ogg';
+  if (value.includes('webm')) return 'webm';
+  return 'wav';
 }
 
 async function modelHealth(env, session, live) {
