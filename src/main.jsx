@@ -809,7 +809,7 @@ function EnterpriseApp({ auth, onLogout }) {
     voiceCancelRef.current = canceling;
     setVoiceCanceling(canceling);
     if (voicePressedRef.current) {
-      setVoiceStatus(canceling ? '松开手指，取消发送' : '正在说话，松开转文字');
+      setVoiceStatus(canceling ? '本次录音将取消' : '正在录音，再点结束转文字');
     }
   };
 
@@ -828,7 +828,7 @@ function EnterpriseApp({ auth, onLogout }) {
       voiceStartedAtRef.current = Date.now();
       setListening(true);
       setVoiceDuration(0);
-      setVoiceStatus('正在说话，松开转文字');
+      setVoiceStatus('正在录音，再点结束转文字');
       voiceTimerRef.current = window.setInterval(() => {
         setVoiceDuration(Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
       }, 250);
@@ -2047,6 +2047,9 @@ function CoworkerWorkspace({
             <button onClick={() => setPage('tasks')}>去任务看板查看</button>
           </div>
         )}
+        <div className={`voice-status ${listening ? 'recording' : ''} ${voiceStatus ? '' : 'empty'}`}>
+          {voiceStatus || '语音状态'}
+        </div>
         <div className="voice-composer">
           {listening && (
             <div className={`wechat-voice-overlay ${voiceCanceling ? 'canceling' : ''}`}>
@@ -2061,8 +2064,8 @@ function CoworkerWorkspace({
                   <span />
                   <span />
                 </div>
-                <strong>{voiceCanceling ? '松开取消' : '正在说话'}</strong>
-                <p>{voiceCanceling ? '松开手指取消本次录音' : '松开转文字，上滑取消'}</p>
+                <strong>正在录音</strong>
+                <p>再次点击语音按钮结束并转文字</p>
                 <em>{voiceDuration}s</em>
               </div>
             </div>
@@ -2087,9 +2090,6 @@ function CoworkerWorkspace({
               <Send size={18} />
             </button>
           </div>
-          <div className={`voice-status ${listening ? 'recording' : ''} ${voiceStatus ? '' : 'empty'}`}>
-            {voiceStatus || '语音状态'}
-          </div>
           {attachments.length > 0 && (
             <div className="attachment-preview">
               {attachments.map((file) => (
@@ -2107,38 +2107,14 @@ function CoworkerWorkspace({
           <div className="composer-tool-row">
             <button
               className={`mic-button ${listening ? 'recording' : ''}`}
-              onPointerDown={(event) => {
-                if (event.button && event.button !== 0) return;
-                event.preventDefault();
-                try {
-                  event.currentTarget.setPointerCapture?.(event.pointerId);
-                } catch {
-                  // Pointer capture is best-effort on older mobile browsers.
-                }
-                startVoice(event.clientY);
-              }}
-              onPointerMove={(event) => {
-                if (!listening) return;
-                event.preventDefault();
-                moveVoice(event.clientY);
-              }}
-              onPointerUp={(event) => {
-                event.preventDefault();
-                try {
-                  event.currentTarget.releasePointerCapture?.(event.pointerId);
-                } catch {
-                  // Already released or not supported.
-                }
-                stopVoice();
-              }}
-              onPointerCancel={(event) => {
-                event.preventDefault();
-                stopVoice({ cancel: true });
+              onClick={() => {
+                if (listening) stopVoice();
+                else startVoice(0);
               }}
               disabled={!access.active || isThinking || attachmentLoading || voiceTranscribing}
             >
               <Mic size={20} />
-              {listening ? (voiceCanceling ? '松开取消' : '松开转文字') : '按住说话'}
+              {listening ? '结束转文字' : '开始语音'}
             </button>
             <label className={`upload-button ${!access.active || isThinking || attachmentLoading ? 'disabled' : ''}`} htmlFor={uploadInputId}>
               <Paperclip size={18} />
