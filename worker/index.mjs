@@ -761,52 +761,301 @@ async function buildSystemAgentOutput(env, store, id) {
 }
 
 async function scanExternalOpportunity(env, store) {
-  const keywords = ['熔炼炉', '真空熔炼', '悬浮熔炼', '新材料', '金属材料', '高熵合金'];
-  const keyword = keywords[Math.floor(Date.now() / 1800000) % keywords.length];
-  const sourceUrl = `https://zb.yfb.qianlima.com/yfbsemsite/mesinfo/zbpglist`;
-  let title = `【待核实线索】近期与${keyword}相关的招标/采购信息`;
-  let company = '待核实采购单位';
-  let snippet = '外部机会 Agent 会优先从千里马、中国招标投标公共服务平台等来源获取相关信息。';
-  try {
-    const response = await fetch(sourceUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': 'EnterpriseOS-Cloudflare-Opportunity-Agent/1.0'
-      },
-      body: new URLSearchParams({ pageNo: '1', pageSize: '10', searchword: keyword, kw: keyword, infoType: '1' })
+  store.tenderScan ??= { seenIds: {}, runs: [] };
+  const keywords = ['熔炼炉', '真空熔炼', '悬浮熔炼', '悬浮真空感应熔炼', '冷坩埚', '高温难熔金属', '高熵合金', '靶材', '金属材料', '新材料'];
+  const offset = Math.floor(Date.now() / 1800000) % keywords.length;
+  const activeKeywords = [...keywords.slice(offset), ...keywords.slice(0, offset)].slice(0, 5);
+  const candidates = [];
+  const warnings = [];
+  for (const keyword of activeKeywords) {
+    const rows = await scanTenderKeyword(keyword).catch((error) => {
+      warnings.push(`${keyword}: ${error.message}`);
+      return [];
     });
-    const html = await response.text();
-    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const found = text.match(/([\u4e00-\u9fa5A-Za-z0-9（）()·\-]{6,80}(熔炼|真空|材料|合金|炉)[\u4e00-\u9fa5A-Za-z0-9（）()·\-]{0,80})/);
-    if (found?.[1]) {
-      title = found[1].slice(0, 90);
-      snippet = text.slice(Math.max(0, found.index - 100), found.index + 260);
-    }
-    const org = snippet.match(/(采购人|招标人|采购单位|建设单位)[:：\s]*([\u4e00-\u9fa5A-Za-z0-9（）()·\-]{4,40})/);
-    if (org?.[2]) company = org[2];
-  } catch {
-    // Public tender sites can block edge requests. Keep a useful manual lead instead of returning nothing.
+    candidates.push(...rows);
   }
-  const id = `tender-${simpleHash(`${title}-${keyword}`)}`;
+  const deduped = dedupeOpportunities(candidates);
+  const ranked = deduped.sort((a, b) => opportunityRank(b, store.tenderScan.seenIds) - opportunityRank(a, store.tenderScan.seenIds));
+  const best = ranked[0] || manualTenderOpportunity(activeKeywords[0], warnings);
+  const now = new Date().toISOString();
+  const firstSeenAt = store.tenderScan.seenIds[best.id] || now;
+  store.tenderScan.seenIds[best.id] = firstSeenAt;
+  store.tenderScan.runs.unshift({
+    id: `scan-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+    at: now,
+    keywords: activeKeywords,
+    found: deduped.length,
+    selected: best.id,
+    warnings: warnings.slice(0, 8)
+  });
+  store.tenderScan.runs = store.tenderScan.runs.slice(0, 30);
+  return { ...best, firstSeenAt, isNew: firstSeenAt === now };
+}
+
+async function scanTenderKeyword(keyword) {
+  const qianlimaUrl = 'https://zb.yfb.qianlima.com/yfbsemsite/mesinfo/zbpglist';
+  const ctbpspUrl = `https://ctbpsp.com/#/bulletinList?keyWords=${encodeURIComponent(keyword)}`;
+  const rows = [];
+  try {
+    const html = await fetchTenderText(qianlimaUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        pageNo: '1',
+        pageSize: '15',
+        pageList: '15',
+        searchword: keyword,
+        searchword2: keyword,
+        kw: keyword,
+        kwname: keyword,
+        infoType: '1',
+        noticeTypes: '0',
+        timeType: '2',
+        searchType: '2'
+      })
+    });
+    rows.push(...parseTenderText(html, { keyword, platform: '全国招标采购信息平台', sourceId: 'qianlima', url: `${qianlimaUrl}?keywords=${encodeURIComponent(keyword)}` }));
+  } catch {
+    // Try the second source below, then fall back to a manual verification card.
+  }
+  try {
+    const html = await fetchTenderText(ctbpspUrl);
+    rows.push(...parseTenderText(html, { keyword, platform: '中国招标投标公共服务平台', sourceId: 'ctbpsp', url: ctbpspUrl }));
+  } catch {
+    // ctbpsp is often JS-rendered from edge runtime.
+  }
+  return rows.length ? rows : [manualTenderOpportunity(keyword, [`${keyword}: 网站需要人工打开验证或暂时无可解析条目`])];
+}
+
+async function fetchTenderText(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'user-agent': 'Mozilla/5.0 EnterpriseOS-Opportunity-Agent/1.0',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.7',
+        ...(options.headers || {})
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseTenderText(html, source) {
+  const text = normalizeTenderText(html);
+  const rows = [];
+  const pattern = /(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})?[\s\S]{0,40}?([\u4e00-\u9fa5A-Za-z0-9（）()·\-]{6,100}(?:熔炼|真空|材料|合金|靶材|冷坩埚|高温炉|熔炼炉)[\u4e00-\u9fa5A-Za-z0-9（）()·\-]{0,100})/g;
+  let match;
+  while ((match = pattern.exec(text))) {
+    const title = cleanTenderTitle(match[2]);
+    if (!isRelevantTender(title) || title.length < 8) continue;
+    const snippet = text.slice(Math.max(0, match.index - 180), match.index + match[0].length + 360);
+    rows.push(buildTenderOpportunity({
+      ...source,
+      title,
+      date: normalizeTenderDate(match[1]) || normalizeTenderDate(snippet.match(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/)?.[0]) || new Date().toISOString().slice(0, 10),
+      snippet
+    }));
+  }
+  return rows.slice(0, 12);
+}
+
+function buildTenderOpportunity({ title, keyword, platform, sourceId, url, date, snippet }) {
+  const fields = extractTenderFields(`${title} ${snippet}`);
+  const missingFields = [
+    !fields.procurementUnit && !fields.tenderUnit && !fields.buyer && '招标/采购单位',
+    !fields.budget && '预算/最高限价',
+    !fields.deadline && '截止/开标时间',
+    !fields.contact && !fields.contactPhone && '联系人'
+  ].filter(Boolean);
+  const completeness = Math.round(((4 - missingFields.length) / 4) * 100);
+  const combinedText = `${title} ${snippet}`;
+  const hasTenderIntent = /招标|采购|询价|竞价|比选|磋商|谈判|中标|成交|公告|报名|投标|开标/.test(combinedText);
+  const score = scoreOpportunity(combinedText) + Math.round(completeness / 10) + (hasTenderIntent ? 14 : -18);
+  const quality = tenderQuality({ text: combinedText, score, completeness, missingFields, hasTenderIntent });
+  const unit = fields.procurementUnit || fields.tenderUnit || fields.buyer || '招标/采购单位待核验';
+  const id = `tender-${simpleHash(`${sourceId}-${keyword}-${title}-${unit}`)}`;
   return {
     id,
     type: '招投标 / 外部线索',
     title,
-    source: '全国招标采购信息平台 / 中国招标投标公共服务平台',
-    company,
-    date: new Date().toISOString().slice(0, 10),
-    score: scoreOpportunity(`${title} ${snippet}`),
-    match: `关键词「${keyword}」与公司悬浮真空熔炼设备、新型金属材料研发和材料试制业务相关。${snippet.slice(0, 120)}`,
-    next: '先核实招标单位、预算、技术参数和截止时间；匹配后转客户管理和任务看板。',
+    source: `${platform} / ${keyword}`,
+    platform,
+    sourceId,
+    keyword,
+    company: unit,
+    procurementUnit: fields.procurementUnit || unit,
+    tenderUnit: fields.tenderUnit,
+    buyer: fields.buyer || unit,
+    agency: fields.agency,
+    budget: fields.budget,
+    deadline: fields.deadline,
+    contact: fields.contact,
+    contactPhone: fields.contactPhone,
+    hasTenderIntent,
+    tenderInfo: `项目：${title}；单位：${unit}；预算：${fields.budget || '待核验'}；截止：${fields.deadline || '待核验'}`,
+    rawSnippet: snippet.slice(0, 280),
+    infoCompleteness: completeness,
+    missingFields,
+    date,
+    score: Math.min(99, score),
+    quality,
+    recommendation: quality.recommendation,
+    match: `命中「${keyword}」，${hasTenderIntent ? '具备采购/招标动作' : '采购动作待核验'}，信息完整度 ${completeness}%。`,
+    why: `命中「${keyword}」及公司关注方向；当前识别单位：${unit}。${hasTenderIntent ? '文本中出现采购/招标动作。' : '暂未识别到明确采购动作。'}${missingFields.length ? `仍缺：${missingFields.join('、')}。` : '关键字段基本齐全。'}`,
+    action: `先核验 ${unit} 的真实需求、预算、截止时间和联系方式；确认后收藏并转客户管理/任务/报价 Agent。`,
+    next: `核实 ${unit} 的采购公告、报名条件、技术参数、预算和截止时间。`,
+    urgency: fields.deadline ? '优先核实截止/开标时间，避免错过报名窗口。' : '24 小时内补齐截止时间和联系人。',
+    recommendedOwner: recommendOwner(`${title} ${snippet}`),
     owner: recommendOwner(`${title} ${snippet}`),
-    url: sourceUrl
+    url,
+    manual: false,
+    createdAt: new Date().toISOString()
   };
+}
+
+function manualTenderOpportunity(keyword, warnings = []) {
+  const url = `https://zb.yfb.qianlima.com/yfbsemsite/mesinfo/zbpglist?keywords=${encodeURIComponent(keyword)}`;
+  const id = `tender-manual-${simpleHash(keyword)}`;
+  return {
+    id,
+    type: '招投标 / 待人工核验',
+    title: `打开招标网站验证：${keyword} 最新公告`,
+    source: '全国招标采购信息平台 / 中国招标投标公共服务平台',
+    company: '待核实采购单位',
+    procurementUnit: '',
+    tenderUnit: '',
+    buyer: '',
+    budget: '',
+    deadline: '',
+    contact: '',
+    contactPhone: '',
+    infoCompleteness: 0,
+    missingFields: ['招标/采购单位', '预算/最高限价', '截止/开标时间', '联系人'],
+    date: new Date().toISOString().slice(0, 10),
+    score: 52,
+    quality: { demand: 3, budget: 1, timing: 1, advantage: 3, total: 52, recommendation: '网站当前未返回可解析详情，需要人工打开来源链接核验。' },
+    recommendation: '先人工打开来源链接，确认是否有真实公告，再收藏给个人助理拆解。',
+    match: `关键词「${keyword}」需要人工核验。`,
+    why: `招标网站可能需要 JavaScript、登录或反爬验证；系统已保留关键词入口。${warnings.slice(0, 2).join('；')}`,
+    action: '打开来源核验采购单位、技术参数、预算、截止时间和联系人后，再转入客户/任务/报价流程。',
+    next: '人工核验来源详情。',
+    urgency: '今天人工验证一次。',
+    recommendedOwner: recommendOwner(keyword),
+    owner: recommendOwner(keyword),
+    url,
+    manual: true,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function extractTenderFields(text) {
+  const clean = normalizeTenderText(text);
+  const procurementUnit = inferTenderUnit(clean, ['采购人', '采购单位', '采购方']);
+  const tenderUnit = inferTenderUnit(clean, ['招标人', '招标单位', '建设单位', '项目单位', '业主单位']);
+  const agency = inferTenderUnit(clean, ['招标代理', '代理机构', '采购代理机构']);
+  const titleUnit = clean.match(/([\u4e00-\u9fa5A-Za-z0-9（）()·-]{4,45}(?:公司|研究院|大学|学院|实验室|中心|集团|工厂|厂|单位))/)?.[1] || '';
+  const budget = clean.match(/(?:预算|最高限价|控制价|估算价|金额|采购金额)[:：]?\s*([0-9.,]+ ?(?:万元|元|人民币|万|亿元))/)?.[1] || '';
+  const deadline = clean.match(/(?:截止|开标|投标截止|报名截止|响应文件提交截止)[^20]{0,12}(20\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2}(?:日)?(?:\s*\d{1,2}[:：]\d{2})?)/)?.[1] || '';
+  const phone = clean.match(/(?:电话|联系方式|联系电话)[:：]?\s*([0-9\-（）() ]{7,22})/)?.[1]?.trim() || '';
+  const contact = clean.match(/(?:联系人|项目联系人)[:：]?\s*([\u4e00-\u9fa5A-Za-z·]{2,12})/)?.[1] || '';
+  return {
+    procurementUnit,
+    tenderUnit,
+    buyer: procurementUnit || tenderUnit || titleUnit,
+    agency,
+    budget,
+    deadline,
+    contact,
+    contactPhone: phone
+  };
+}
+
+function inferTenderUnit(text, labels) {
+  for (const label of labels) {
+    const match = text.match(new RegExp(`${label}[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9（）()·\\-]{4,55})`));
+    if (match?.[1]) return cleanTenderUnit(match[1]);
+  }
+  return '';
+}
+
+function cleanTenderUnit(value) {
+  return String(value || '').replace(/(项目|地址|联系人|联系方式|电话|采购|招标|公告).*/, '').trim().slice(0, 40);
+}
+
+function tenderQuality({ text, score, completeness, missingFields, hasTenderIntent }) {
+  const demand = hasTenderIntent ? 5 : /设备|熔炼|材料/.test(text) ? 3 : 2;
+  const budget = missingFields.includes('预算/最高限价') ? 2 : 4;
+  const timing = missingFields.includes('截止/开标时间') ? 2 : 5;
+  const advantage = /悬浮|真空|冷坩埚|高熵|靶材|难熔|熔炼/.test(text) ? 5 : 3;
+  const total = Math.min(99, Math.round(score * 0.55 + completeness * 0.35 + advantage * 2));
+  const recommendation = !hasTenderIntent
+    ? '先确认是否为真实采购/招标公告，再决定是否推进。'
+    : total >= 80
+      ? '建议当天核实并分配负责人跟进。'
+      : total >= 65
+        ? '值得收藏验证，先补齐缺失字段。'
+        : '先人工核验真实性，暂不直接推进报价。';
+  return { demand, budget, timing, advantage, total, recommendation };
+}
+
+function dedupeOpportunities(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.title}-${item.procurementUnit || item.company || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function opportunityRank(item, seenIds = {}) {
+  const freshness = item.manual ? -20 : 0;
+  const novelty = seenIds[item.id] ? 0 : 12;
+  const tenderIntent = item.hasTenderIntent ? 18 : -16;
+  return Number(item.quality?.total || item.score || 0) + Number(item.infoCompleteness || 0) / 4 + freshness + novelty + tenderIntent;
+}
+
+function normalizeTenderText(value) {
+  return String(value || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanTenderTitle(value) {
+  return String(value || '')
+    .replace(/[(（]?原标题.*$/g, '')
+    .replace(/[|_—]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+function isRelevantTender(value) {
+  return /熔炼|真空|悬浮|冷坩埚|材料|合金|靶材|高温|难熔|炉/.test(value);
+}
+
+function normalizeTenderDate(value) {
+  const match = String(value || '').match(/(20\d{2})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
+  if (!match) return '';
+  return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
 }
 
 function materializeOpportunity(store, opportunity, ownerId) {
   upsertById(store.generatedOpportunities, opportunity);
-  const customerName = opportunity.company && opportunity.company !== '待核实采购单位' ? opportunity.company : opportunity.title.replace(/[【】\[\]]/g, '').slice(0, 18);
+  const customerName = opportunity.procurementUnit || opportunity.tenderUnit || opportunity.company && opportunity.company !== '待核实采购单位' ? opportunity.procurementUnit || opportunity.tenderUnit || opportunity.company : opportunity.title.replace(/[【】\[\]]/g, '').slice(0, 18);
   const customer = {
     id: `customer-${simpleHash(customerName)}`,
     name: customerName,
