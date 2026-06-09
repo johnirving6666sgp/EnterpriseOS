@@ -322,6 +322,7 @@ function EnterpriseApp({ auth, onLogout }) {
   const [workspaceId, setWorkspaceId] = useState(auth.user.id);
   const [messagesByUser, setMessagesByUser] = useState(baseMessages);
   const [draft, setDraft] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [thinkingByUser, setThinkingByUser] = useState({});
@@ -432,6 +433,16 @@ function EnterpriseApp({ auth, onLogout }) {
   const dashboardQuotes = isJamie
     ? quotes
     : quotes.filter((quote) => quote.owner === dashboardOwnerId || (quote.collaborators ?? []).includes(dashboardOwnerId));
+  const filteredOpportunities = filterRecords(allOpportunities, searchQuery);
+  const filteredTasks = filterRecords(tasks, searchQuery);
+  const filteredCustomers = filterRecords(customers, searchQuery);
+  const filteredQuotes = filterRecords(quotes, searchQuery);
+  const filteredBroadcasts = filterRecords(broadcasts, searchQuery);
+  const filteredDashboardTasks = filterRecords(dashboardTasks, searchQuery);
+  const filteredDashboardCustomers = filterRecords(dashboardCustomers, searchQuery);
+  const filteredDashboardQuotes = filterRecords(dashboardQuotes, searchQuery);
+  const filteredDashboardBroadcasts = filterRecords(dashboardBroadcasts, searchQuery);
+  const filteredDashboardSavedCards = filterRecords(dashboardSavedCards, searchQuery);
   const agentGrowthByUser = useMemo(
     () =>
       buildAgentGrowthMap({
@@ -1443,7 +1454,11 @@ function EnterpriseApp({ auth, onLogout }) {
           </div>
           <div className="topbar-search">
             <Search size={16} />
-            <input placeholder="搜索线索、客户、任务或报价..." />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索线索、客户、任务或报价..."
+            />
           </div>
           <div className="topbar-actions">
             <button aria-label="系统设置">
@@ -1466,16 +1481,17 @@ function EnterpriseApp({ auth, onLogout }) {
         <BusinessDashboard
           agentFeedback={agentFeedback}
           agentGrowth={agentGrowthByUser[dashboardOwnerId]}
-          broadcasts={dashboardBroadcasts}
-          customers={dashboardCustomers}
+          broadcasts={filteredDashboardBroadcasts}
+          searchQuery={searchQuery}
+          customers={filteredDashboardCustomers}
           isJamie={isJamie}
-          opportunities={allOpportunities}
-          quotes={dashboardQuotes}
-          savedCards={dashboardSavedCards}
+          opportunities={filteredOpportunities}
+          quotes={filteredDashboardQuotes}
+          savedCards={filteredDashboardSavedCards}
           setPage={setPage}
           startQuickPrompt={startQuickPrompt}
           systemOutputs={systemOutputs}
-          tasks={dashboardTasks}
+          tasks={filteredDashboardTasks}
           workspaceName={dashboardAccess.ownerName}
         />
       )}
@@ -1493,7 +1509,7 @@ function EnterpriseApp({ auth, onLogout }) {
           voiceDuration={voiceDuration}
           messages={messages}
           isThinking={isThinking}
-          broadcasts={inboxBroadcasts}
+          broadcasts={filterRecords(inboxBroadcasts, searchQuery)}
           createTaskFromMessage={createTaskFromMessage}
           savedCards={savedCards}
           selectedId={workspaceId}
@@ -1542,7 +1558,7 @@ function EnterpriseApp({ auth, onLogout }) {
           runTaskAgent={() => runSystemAgent('task')}
           running={systemRunning.task}
           setPage={setPage}
-          tasks={tasks}
+          tasks={filteredTasks}
           taskOutputs={systemOutputs.task ?? []}
           updateTask={updateTask}
         />
@@ -1551,21 +1567,21 @@ function EnterpriseApp({ auth, onLogout }) {
           {visiblePage === 'crm' && permissions.customers !== false && (
         <CustomerManager
           canManageWorkflow={canManageWorkflow}
-          customers={customers}
+          customers={filteredCustomers}
           customerOutputs={systemOutputs.customer ?? []}
-          opportunities={allOpportunities}
-          quotes={quotes}
+          opportunities={filteredOpportunities}
+          quotes={filteredQuotes}
           running={systemRunning.customer}
           runCustomerAgent={() => runSystemAgent('customer')}
           setPage={setPage}
-          tasks={tasks}
+          tasks={filteredTasks}
         />
       )}
 
           {visiblePage === 'quote' && permissions.quote !== false && (
         <QuoteBuilder
           canManageWorkflow={canManageWorkflow}
-          quotes={quotes}
+          quotes={filteredQuotes}
           quoteOutputs={systemOutputs.quote ?? []}
           running={systemRunning.quote}
           runQuoteAgent={() => runSystemAgent('quote')}
@@ -1574,12 +1590,13 @@ function EnterpriseApp({ auth, onLogout }) {
       )}
 
           {visiblePage === 'broadcast' && (
-        <BroadcastCenter broadcasts={broadcasts} createBroadcast={createBroadcast} setPage={setPage} totalUsage={totalUsage} />
+        <BroadcastCenter broadcasts={filteredBroadcasts} createBroadcast={createBroadcast} setPage={setPage} totalUsage={totalUsage} />
       )}
 
           {visiblePage === 'opportunity' && (
         <OpportunityBoard
-          opportunities={allOpportunities}
+          opportunities={filteredOpportunities}
+          searchQuery={searchQuery}
           savedIds={savedByUser[workspaceId] ?? []}
           saveOpportunity={saveOpportunity}
           workspaceName={access.ownerName}
@@ -2950,7 +2967,7 @@ function BroadcastCenter({ broadcasts, createBroadcast, setPage, totalUsage }) {
   );
 }
 
-function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceName, runExternalAgent, running, runNotice, setPage }) {
+function OpportunityBoard({ opportunities, savedIds, saveOpportunity, searchQuery, workspaceName, runExternalAgent, running, runNotice, setPage }) {
   return (
     <section className="opportunity-page">
       <div className="radar-hero">
@@ -2970,9 +2987,12 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
           </div>
         )}
       </div>
+      {searchQuery.trim() && <p className="search-result-note">正在筛选：{searchQuery.trim()}，共 {opportunities.length} 条线索。</p>}
       <div className="masonry-board">
         {opportunities.map((card) => {
           const saved = savedIds.includes(card.id);
+          const sourceUrl = card.detailUrl || card.url;
+          const hasDetailUrl = Boolean(card.detailUrl);
           return (
             <article className="radar-card" key={card.id}>
               <small>{card.source}</small>
@@ -3018,9 +3038,9 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
               {card.urgency && <p className="urgency-note">紧急度：{card.urgency}</p>}
               {card.action && <p className="action-note">{card.action}</p>}
               {card.date && <p className="action-note">发布日期：{card.date}</p>}
-              {card.url && (
-                <a className="tender-link" href={card.url} target="_blank" rel="noreferrer">
-                  打开招标来源
+              {sourceUrl && (
+                <a className="tender-link" href={sourceUrl} target="_blank" rel="noreferrer">
+                  {hasDetailUrl ? '打开招标详情' : '打开搜索来源'}
                 </a>
               )}
               <div className="match-pill">{card.match}</div>
@@ -3031,6 +3051,12 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
             </article>
           );
         })}
+        {!opportunities.length && (
+          <div className="empty-search-card">
+            <strong>没有找到匹配线索</strong>
+            <p>换一个关键词试试，例如：熔炼炉、冷坩埚、靶材、航天、预算。</p>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -3657,6 +3683,20 @@ function formatFileSize(size = 0) {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${Math.ceil(size / 1024)} KB`;
   return `${size} B`;
+}
+
+function filterRecords(records = [], query = '') {
+  const cleanQuery = query.trim().toLowerCase();
+  if (!cleanQuery) return records;
+  return records.filter((record) => searchableText(record).toLowerCase().includes(cleanQuery));
+}
+
+function searchableText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(searchableText).join(' ');
+  if (typeof value === 'object') return Object.values(value).map(searchableText).join(' ');
+  return '';
 }
 
 createRoot(document.getElementById('root')).render(<App />);

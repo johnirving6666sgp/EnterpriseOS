@@ -857,9 +857,11 @@ function parseTenderText(html, source) {
     const title = cleanTenderTitle(match[2]);
     if (!isRelevantTender(title) || title.length < 8) continue;
     const snippet = text.slice(Math.max(0, match.index - 180), match.index + match[0].length + 360);
+    const detailUrl = extractTenderDetailUrl(html, title, source.url);
     rows.push(buildTenderOpportunity({
       ...source,
       title,
+      detailUrl,
       date: normalizeTenderDate(match[1]) || normalizeTenderDate(snippet.match(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/)?.[0]) || new Date().toISOString().slice(0, 10),
       snippet
     }));
@@ -867,8 +869,9 @@ function parseTenderText(html, source) {
   return rows.slice(0, 12);
 }
 
-function buildTenderOpportunity({ title, keyword, platform, sourceId, url, date, snippet }) {
+function buildTenderOpportunity({ title, keyword, platform, sourceId, url, detailUrl, date, snippet }) {
   const fields = extractTenderFields(`${title} ${snippet}`);
+  const searchUrl = buildTenderSearchUrl(sourceId, title, keyword, url);
   const missingFields = [
     !fields.procurementUnit && !fields.tenderUnit && !fields.buyer && '招标/采购单位',
     !fields.budget && '预算/最高限价',
@@ -915,7 +918,9 @@ function buildTenderOpportunity({ title, keyword, platform, sourceId, url, date,
     urgency: fields.deadline ? '优先核实截止/开标时间，避免错过报名窗口。' : '24 小时内补齐截止时间和联系人。',
     recommendedOwner: recommendOwner(`${title} ${snippet}`),
     owner: recommendOwner(`${title} ${snippet}`),
-    url,
+    url: detailUrl || searchUrl,
+    sourceSearchUrl: searchUrl,
+    detailUrl,
     manual: false,
     createdAt: new Date().toISOString()
   };
@@ -1038,9 +1043,37 @@ function cleanTenderTitle(value) {
   return String(value || '')
     .replace(/[(（]?原标题.*$/g, '')
     .replace(/[|_—]+/g, ' ')
+    .replace(/[（(]\s*$/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120);
+}
+
+function buildTenderSearchUrl(sourceId, title, keyword, fallbackUrl = '') {
+  const query = encodeURIComponent(cleanTenderTitle(title) || keyword);
+  if (sourceId === 'qianlima') return `https://zb.yfb.qianlima.com/yfbsemsite/mesinfo/zbpglist?keywords=${query}`;
+  if (sourceId === 'ctbpsp') return `https://ctbpsp.com/#/bulletinList?keyWords=${query}`;
+  return fallbackUrl;
+}
+
+function extractTenderDetailUrl(html = '', title = '', sourceUrl = '') {
+  const cleanTitle = String(title || '').slice(0, 28);
+  const fullHtml = String(html || '');
+  const index = cleanTitle ? fullHtml.indexOf(cleanTitle) : -1;
+  const windowHtml = index >= 0 ? fullHtml.slice(Math.max(0, index - 1400), index + 1800) : fullHtml.slice(0, 3000);
+  const hrefs = [...windowHtml.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi)]
+    .map((match) => match[1])
+    .filter((href) => href && !/^javascript:|^#$/i.test(href));
+  const href =
+    hrefs.find((item) => /info|detail|notice|bulletin|zb|bid|content|html|htm/i.test(item) && !/zbpglist|bulletinList/i.test(item)) ||
+    hrefs.find((item) => !/zbpglist|bulletinList|login|register/i.test(item)) ||
+    '';
+  if (!href) return '';
+  try {
+    return new URL(href, sourceUrl).toString();
+  } catch {
+    return href;
+  }
 }
 
 function isRelevantTender(value) {

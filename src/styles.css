@@ -843,6 +843,37 @@ button:disabled {
   font-size: 13px;
 }
 
+.search-result-note,
+.empty-search-card {
+  border: 1px solid #dbe7ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+}
+
+.search-result-note {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.empty-search-card {
+  padding: 18px;
+}
+
+.empty-search-card strong {
+  display: block;
+  color: #172033;
+  font-size: 16px;
+}
+
+.empty-search-card p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-weight: 700;
+}
+
 .dashboard-row.primary span {
   color: #d0d5dd;
 }
