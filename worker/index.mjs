@@ -347,7 +347,7 @@ async function agentChat(request, env, session, id) {
   let reply;
   let llm = { simulated: true };
   try {
-    const result = await callModel(env, agent.provider, agent.apiModel, [{ role: 'user', content: prompt }]);
+    const result = await callModel(env, agent.provider, agent.apiModel, [{ role: 'user', content: prompt }], { maxTokens: 2800 });
     reply = result.reply;
     llm = result;
   } catch (error) {
@@ -1220,14 +1220,15 @@ function persistArtifacts(store, artifacts) {
   store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 30);
 }
 
-async function callModel(env, provider = 'openrouter', apiModel = '', messages = []) {
+async function callModel(env, provider = 'openrouter', apiModel = '', messages = [], options = {}) {
   const backend = backendFor(provider, apiModel);
-  if (backend === 'anthropic' && String(env.ANTHROPIC_API_KEY || '').trim()) return callAnthropic(env, apiModel, messages);
-  if (backend === 'openai' && String(env.OPENAI_API_KEY || '').trim()) return callOpenAI(env, apiModel, messages);
-  return callOpenRouter(env, normalizeOpenRouterModel(backend, apiModel), messages);
+  const maxTokens = options.maxTokens || 1200;
+  if (backend === 'anthropic' && String(env.ANTHROPIC_API_KEY || '').trim()) return callAnthropic(env, apiModel, messages, maxTokens);
+  if (backend === 'openai' && String(env.OPENAI_API_KEY || '').trim()) return callOpenAI(env, apiModel, messages, maxTokens);
+  return callOpenRouter(env, normalizeOpenRouterModel(backend, apiModel), messages, maxTokens);
 }
 
-async function callOpenRouter(env, model, messages) {
+async function callOpenRouter(env, model, messages, maxTokens = 1200) {
   const keys = [
     env.OPENROUTER_API_KEY && ['primary', String(env.OPENROUTER_API_KEY).trim()],
     env.OPENROUTER_BACKUP_API_KEY && ['backup', String(env.OPENROUTER_BACKUP_API_KEY).trim()]
@@ -1244,7 +1245,7 @@ async function callOpenRouter(env, model, messages) {
           'HTTP-Referer': env.OPENROUTER_SITE_URL || 'https://timeconnector.net',
           'X-Title': env.OPENROUTER_APP_NAME || 'EnterpriseOS'
         },
-        body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 900 })
+        body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error?.message || `OpenRouter HTTP ${response.status}`);
@@ -1256,7 +1257,7 @@ async function callOpenRouter(env, model, messages) {
   throw lastError;
 }
 
-async function callAnthropic(env, model, messages) {
+async function callAnthropic(env, model, messages, maxTokens = 1200) {
   const apiKey = String(env.ANTHROPIC_API_KEY || '').trim();
   const response = await fetch(env.ANTHROPIC_BASE_URL || ANTHROPIC_BASE_URL, {
     method: 'POST',
@@ -1265,19 +1266,19 @@ async function callAnthropic(env, model, messages) {
       'x-api-key': apiKey,
       'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01'
     },
-    body: JSON.stringify({ model: normalizeAnthropicModel(model), messages, temperature: 0.4, max_tokens: 900 })
+    body: JSON.stringify({ model: normalizeAnthropicModel(model), messages, temperature: 0.4, max_tokens: maxTokens })
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || `Anthropic HTTP ${response.status}`);
   return { backend: 'anthropic', model: normalizeAnthropicModel(model), keySlot: 'anthropic-direct', reply: payload.content?.map((item) => item.text).filter(Boolean).join('\n') ?? '' };
 }
 
-async function callOpenAI(env, model, messages) {
+async function callOpenAI(env, model, messages, maxTokens = 1200) {
   const apiKey = String(env.OPENAI_API_KEY || '').trim();
   const response = await fetch(env.OPENAI_BASE_URL || OPENAI_CHAT_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: normalizeOpenAIModel(model), messages, temperature: 0.4, max_tokens: 900 })
+    body: JSON.stringify({ model: normalizeOpenAIModel(model), messages, temperature: 0.4, max_tokens: maxTokens })
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || `OpenAI HTTP ${response.status}`);
@@ -1426,7 +1427,7 @@ function buildPersonalAgentPrompt(store, agent, user, message, attachments) {
   const attachmentText = attachments?.length ? `\n上传附件：\n${attachments.map((file) => `${file.name}: ${file.text || file.parseNote || file.type || ''}`).join('\n')}` : '';
   return `你是 ${user.name} 的企业OS个人助理 ${agent.name}。公司专注悬浮真空熔炼设备、新型金属材料研发、材料试制和相关设备/服务报价。
 
-你的任务：帮助同事整理客户需求、下一步任务、报价准备、风险和商机。回答要具体、短、能推进工作。不要假装已经查看不能读取的文件；如果附件有文字，就基于文字分析。
+你的任务：帮助同事整理客户需求、下一步任务、报价准备、风险和商机。回答要具体、完整、能推进工作；简单问题可以短答，但遇到技术对比、方案、报价、会议纪要、附件分析时，要一次性给出完整结构，不要让用户反复追问“继续”。如果内容很长，优先用分段标题和表格，表格必须闭合完整。不要假装已经查看不能读取的文件；如果附件有文字，就基于文字分析。
 
 最近对话：
 ${recent || '暂无'}

@@ -1479,6 +1479,7 @@ async function generateAgentReply({ store, agent, user, message }) {
             '团队方向：悬浮真空熔炼设备、新型金属材料研发、材料选型、设备选型、客户开发和商机判断。',
             getPersonalAgentRoleInstruction(user.id),
             '回答要求：直接帮助用户解决当下问题；不要只说“我会记录”；优先输出可执行建议、下一步动作、客户/技术/风险判断。',
+            '长文要求：用户要求技术对比、方案、报价、会议纪要、附件分析时，要一次性给出完整结构，不要让用户反复追问“继续”。如果使用表格，表格必须闭合完整；必要时分成“结论、依据、风险、下一步”。',
             '隐私规则：同事之间的私密聊天不可互相暴露；内部信息 Agent 只能抽象沉淀组织知识，不要泄露其他同事原文。',
             '如果用户指出回答不对，先承认并基于上一轮上下文重新回答。用中文，简洁但有内容。'
           ].join('\n')
@@ -1487,7 +1488,7 @@ async function generateAgentReply({ store, agent, user, message }) {
         { role: 'user', content: message }
       ],
       temperature: 0.45,
-      maxTokens: 1100
+      maxTokens: 2800
     });
     return {
       reply: result.reply,

@@ -1195,7 +1195,7 @@ h2 {
   flex-direction: column;
   gap: 9px;
   min-height: 360px;
-  max-height: min(52svh, 520px);
+  max-height: min(68svh, 760px);
   overflow: auto;
   overscroll-behavior: contain;
   padding: 12px;
@@ -1227,10 +1227,11 @@ h2 {
 }
 
 .message {
-  max-width: 84%;
+  max-width: min(92%, 960px);
   padding: 10px 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  overflow-x: auto;
   white-space: pre-wrap;
 }
 
@@ -1260,6 +1261,7 @@ h2 {
 
 .message.agent {
   align-self: flex-start;
+  max-width: min(96%, 1040px);
 }
 
 .message.thinking {
