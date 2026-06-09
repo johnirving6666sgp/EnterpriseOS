@@ -87,9 +87,9 @@ const systemAgents = [
     id: 'external',
     name: '外部机会 Agent',
     job: '扫描行业、招标、新闻，只输出外部线索和商机评分',
-    defaultProvider: 'openrouter',
-    defaultModel: 'openrouter/openai/gpt-4.1-mini',
-    reason: '需要高吞吐、多来源路由和成本控制，默认走 OpenRouter GPT-4.1 mini；深度研判再升 GPT-4.1。'
+    defaultProvider: 'openai',
+    defaultModel: 'gpt-4.1-mini',
+    reason: '外部线索扫描需要稳定、快速的结构化判断，默认走 OpenAI GPT-4.1 mini；深度研判再升 GPT-4.1。'
   },
   {
     id: 'customer',
@@ -160,7 +160,7 @@ const recommendedAgentRoutes = {
 
 const recommendedSystemRoutes = {
   internal: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
-  external: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
+  external: { provider: 'openai', apiModel: 'gpt-4.1-mini' },
   task: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' },
   quote: { provider: 'claude', apiModel: 'claude-sonnet-4' },
   customer: { provider: 'openrouter', apiModel: 'openrouter/openai/gpt-4.1-mini' }

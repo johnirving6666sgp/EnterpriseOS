@@ -99,8 +99,8 @@ const seed = {
       name: '外部机会 Agent',
       scope: '扫描行业、招标、新闻，只输出外部线索和商机评分。',
       boundary: '不维护客户阶段、不生成报价、不直接分配任务。',
-      provider: 'openrouter',
-      apiModel: 'openrouter/openai/gpt-4.1-mini'
+      provider: 'openai',
+      apiModel: 'gpt-4.1-mini'
     },
     customer: {
       name: '客户管理 Agent',
