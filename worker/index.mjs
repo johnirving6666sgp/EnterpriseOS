@@ -577,6 +577,8 @@ async function speechTranscribe(request, env) {
   const form = new FormData();
   form.append('model', env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1');
   form.append('language', 'zh');
+  form.append('temperature', '0');
+  form.append('prompt', '这是企业OS里的中文工作语音，内容通常关于客户、任务、报价、设备、材料、招标和会议纪要。只转写用户真实说的话。不要输出字幕来源、作者署名、点赞订阅、广告语或栏目名称。');
   form.append('file', parsed.blob, safeAudioFileName(audio.name, parsed.mime));
   const response = await fetch(env.OPENAI_TRANSCRIPTION_URL || OPENAI_TRANSCRIPTION_URL, {
     method: 'POST',
@@ -585,7 +587,37 @@ async function speechTranscribe(request, env) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) return json({ error: 'transcription_failed', message: payload.error?.message || `OpenAI transcription HTTP ${response.status}` }, 502);
-  return json({ text: String(payload.text ?? '').trim() });
+  const rawText = String(payload.text ?? '').trim();
+  return json({ text: cleanSpeechTranscription(rawText), rawText });
+}
+
+function cleanSpeechTranscription(text) {
+  let value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+
+  const noisePatterns = [
+    /字幕由\s*Amara\.org\s*社区提供/gi,
+    /\bby\s+[a-z0-9_-]{2,}\b/gi,
+    /请不吝?点?赞[，,\s、]*(订阅)?[，,\s、]*(转发)?[，,\s、]*(打赏)?[，,\s、]*(支持)?/gi,
+    /点赞[，,\s、]*订阅[，,\s、]*转发[，,\s、]*打赏[，,\s、]*支持/gi,
+    /明镜与点点栏目/gi,
+    /明镜.*?点点栏目/gi,
+    /感谢观看/gi,
+    /谢谢观看/gi,
+    /未经著作权人书面许可[，,\s、]*不得翻唱或使用。?/gi,
+    /未经.*?许可.*?(不得|禁止).*?(翻唱|使用|转载|传播)。?/gi,
+    /本节目.*?(版权|著作权).*?(所有|保留)。?/gi,
+    /版权所有.*?(侵权|必究)?。?/gi
+  ];
+  for (const pattern of noisePatterns) value = value.replace(pattern, ' ');
+  value = value.replace(/\s+/g, ' ').trim();
+
+  const mostlyNoise = /^(点赞|订阅|转发|打赏|支持|明镜|点点|栏目|字幕|感谢|谢谢|观看|版权|著作权|许可|翻唱|使用|转载|传播|侵权|必究|。|，|,|\s)+$/i;
+  const hasChinese = /[\u3400-\u9fff]/.test(value);
+  const shortNonChinese = !hasChinese && value.replace(/[^\p{L}\p{N}]+/gu, '').length < 12;
+  if (!value || mostlyNoise.test(value)) return '';
+  if (shortNonChinese) return '';
+  return value;
 }
 
 function safeAudioFileName(name, mime) {
