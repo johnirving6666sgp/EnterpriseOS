@@ -3326,8 +3326,8 @@ function getSystemAgentDisplayName(id) {
 
 function describeSystemRunResult(id, output, createdTasks = [], llm = {}) {
   const modelStatus = llm?.simulated
-    ? `当前为本地降级模式：${llm.message || 'OPENROUTER_API_KEY 未配置或模型调用失败'}`
-    : `已调用真模型：${llm.model || llm.apiModel || llm.provider || 'OpenRouter'}`;
+    ? `当前为基础扫描模式：${llm.message || '模型未返回状态，已使用系统规则结果'}`
+    : `已调用真模型：${llm.model || llm.apiModel || llm.provider || '已配置模型'}`;
   if (id === 'external') {
     const title = output?.opportunity?.title || output?.title || '外部线索';
     const source = output?.opportunity?.source || '外部来源';

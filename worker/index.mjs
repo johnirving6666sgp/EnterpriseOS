@@ -743,14 +743,59 @@ async function runScheduledExternalScan(env) {
 
 async function buildSystemAgentOutput(env, store, id) {
   if (id === 'external') {
+    const systemAgent = store.systemAgents?.external ?? { provider: 'openai', apiModel: 'gpt-4.1-mini' };
     const opportunity = await scanExternalOpportunity(env, store);
+    let summary = opportunity.match;
+    let action = opportunity.next;
+    let llm = {
+      simulated: true,
+      provider: systemAgent.provider,
+      model: systemAgent.apiModel,
+      message: '已使用招标扫描器完成基础抓取，未调用大模型。'
+    };
+    try {
+      const result = await callModel(
+        env,
+        systemAgent.provider,
+        systemAgent.apiModel,
+        [
+          {
+            role: 'user',
+            content: [
+              '你是企业OS的外部机会 Agent。请基于下面这条招标/外部线索，用中文输出简洁但有判断力的商机摘要。',
+              '要求：1. 判断是否值得跟进；2. 说明缺失信息；3. 给出下一步动作；4. 不要编造预算、联系人或截止时间。',
+              `线索标题：${opportunity.title}`,
+              `来源：${opportunity.source}`,
+              `采购/招标单位：${opportunity.procurementUnit || opportunity.tenderUnit || opportunity.buyer || opportunity.company || '待核验'}`,
+              `匹配原因：${opportunity.match}`,
+              `当前判断：${opportunity.why}`,
+              `缺失字段：${opportunity.missingFields?.join('、') || '无'}`,
+              `建议动作：${opportunity.next || opportunity.action}`
+            ].join('\n')
+          }
+        ],
+        { maxTokens: 700 }
+      );
+      summary = result.reply || summary;
+      action = opportunity.next || opportunity.action;
+      llm = { provider: result.backend, model: result.model, keySlot: result.keySlot, simulated: false };
+    } catch (error) {
+      llm = {
+        simulated: true,
+        provider: systemAgent.provider,
+        model: systemAgent.apiModel,
+        error: error.message,
+        message: `${systemAgent.provider === 'openai' ? 'OPENAI_API_KEY' : '模型 API Key'} 调用失败，已使用招标扫描器结果。`
+      };
+    }
     return {
       id: `external-${Date.now()}`,
       type: '外部机会',
       title: opportunity.title,
-      summary: opportunity.match,
-      action: opportunity.next,
+      summary,
+      action,
       opportunity,
+      llm,
       createdAt: new Date().toISOString()
     };
   }
