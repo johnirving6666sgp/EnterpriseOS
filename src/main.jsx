@@ -2043,7 +2043,7 @@ function CoworkerWorkspace({
           {messages.length ? (
             messages.map((message, index) => (
               <div className={`message ${message.from} ${message.thinking ? 'thinking' : ''}`} key={message.id ?? `${message.from}-${index}`}>
-                {message.text}
+                <div className="message-text">{message.text}</div>
                 {message.from === 'agent' && !message.thinking && (
                   <div className="message-feedback-actions">
                     <button onClick={() => createTaskFromMessage(message)}>生成任务</button>

@@ -1231,8 +1231,15 @@ h2 {
   padding: 10px 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
-  overflow-x: auto;
+  overflow: visible;
   white-space: pre-wrap;
+}
+
+.message-text {
+  display: block;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message-feedback-actions {
@@ -2938,13 +2945,14 @@ select {
 
   .message-stream {
     min-height: 260px;
-    height: 46svh;
-    max-height: 420px;
+    height: auto;
+    max-height: min(66svh, 640px);
     padding: 10px;
   }
 
   .message {
     max-width: 100%;
+    overflow: visible;
   }
 
   .identity-line span {
