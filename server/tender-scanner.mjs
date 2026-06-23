@@ -17,12 +17,14 @@ export const fallbackTenderKeywords = [
   '材料试制',
   '特种合金',
   '真空炉',
+  '烧结炉',
+  '脱脂烧结炉',
   '电弧熔炼',
   '感应熔炼'
 ];
 
 const relevantPattern =
-  /熔炼|熔炼炉|真空熔炼|悬浮熔炼|悬浮真空感应熔炼|冷坩埚|真空炉|电弧炉|电弧熔炼|感应炉|感应熔炼|高温炉|实验炉|难熔金属|高温难熔金属|高熵合金|靶材|金属材料|新材料|材料试制|特种合金|合金/i;
+  /熔炼|熔炼炉|真空熔炼|悬浮熔炼|悬浮真空感应熔炼|冷坩埚|真空炉|烧结炉|脱脂烧结炉|电弧炉|电弧熔炼|感应炉|感应熔炼|高温炉|实验炉|难熔金属|高温难熔金属|高熵合金|靶材|金属材料|新材料|材料试制|特种合金|合金/i;
 
 const scoreTerms = [
   ['悬浮真空感应熔炼', 28],
@@ -34,12 +36,16 @@ const scoreTerms = [
   ['真空熔炼', 16],
   ['熔炼炉', 14],
   ['真空炉', 12],
+  ['脱脂烧结炉', 14],
+  ['烧结炉', 12],
   ['金属材料', 10],
   ['新材料', 10],
   ['材料试制', 10],
   ['特种合金', 10],
   ['熔炼', 8]
 ];
+
+const closedTenderPattern = /中标|成交|结果公告|结果公示|废标|流标|终止|失败公告|合同公告|验收公告|更正公告|变更公告/;
 
 export async function loadTenderConfig(rootDir) {
   const configPath = path.join(rootDir, 'config', 'tender-sources.json');
@@ -76,11 +82,15 @@ export async function scanTenderSources({
   rootDir,
   keywords,
   limit = 100,
+  detailLimit = 3,
+  fetchTimeoutMs = 5000,
   maxKeywords = Infinity,
   includeManual = true,
-  scanState = {}
+  scanState = {},
+  timeBudgetMs = 12000
 }) {
   const startedAt = Date.now();
+  const deadlineAt = startedAt + timeBudgetMs;
   const config = await loadTenderConfig(rootDir);
   const activeKeywords = unique((keywords?.length ? keywords : config.keywords).filter(Boolean)).slice(0, maxKeywords);
   const opportunities = [];
@@ -96,8 +106,12 @@ export async function scanTenderSources({
       continue;
     }
     for (const keyword of activeKeywords) {
+      if (Date.now() >= deadlineAt) {
+        warnings.push(`扫描已达到 ${timeBudgetMs}ms 时间预算，剩余关键词将在下次刷新时继续。`);
+        break;
+      }
       try {
-        const rows = await adapter({ source, keyword, includeManual, today: new Date().toISOString().slice(0, 10) });
+        const rows = await adapter({ source, keyword, includeManual, today: new Date().toISOString().slice(0, 10), detailLimit, deadlineAt, fetchTimeoutMs });
         opportunities.push(...rows);
         sourceStats[source.id].found += rows.length;
         sourceStats[source.id].verified += rows.filter((item) => !item.manual).length;
@@ -154,7 +168,7 @@ export async function scanTenderSources({
 }
 
 const adapters = {
-  async qianlima({ source, keyword }) {
+  async qianlima({ source, keyword, detailLimit, deadlineAt, fetchTimeoutMs }) {
     const sourceUrl = `${source.baseUrl}?keywords=${encodeURIComponent(keyword)}`;
     const rows = [];
     try {
@@ -176,12 +190,12 @@ const adapters = {
           flag: '0',
           source: 'baidu'
         })
-      });
+      }, remainingTimeout(deadlineAt, fetchTimeoutMs));
       rows.push(...parseQianlimaRows(html, keyword, source, sourceUrl));
     } catch {
       // Public GET shapes below are a fallback when POST is blocked.
     }
-    if (rows.length) return enrichRowsWithDetails(rows, source);
+    if (rows.length) return enrichRowsWithDetails(rows, source, detailLimit, deadlineAt, fetchTimeoutMs);
 
     const urls = [
       `${source.baseUrl}?keywords=${encodeURIComponent(keyword)}`,
@@ -189,19 +203,20 @@ const adapters = {
       `${source.baseUrl}?search=${encodeURIComponent(keyword)}`
     ];
     for (const url of urls) {
-      const html = await fetchText(url);
+      if (Date.now() >= deadlineAt) break;
+      const html = await fetchText(url, {}, remainingTimeout(deadlineAt, fetchTimeoutMs));
       const parsed = parseQianlimaRows(html, keyword, source, url);
-      if (parsed.length) return enrichRowsWithDetails(parsed, source);
+      if (parsed.length) return enrichRowsWithDetails(parsed, source, detailLimit, deadlineAt, fetchTimeoutMs);
     }
     return [];
   },
 
-  async ctbpsp({ source, keyword, includeManual, today }) {
+  async ctbpsp({ source, keyword, includeManual, today, detailLimit, deadlineAt, fetchTimeoutMs }) {
     const url = `${source.baseUrl}?keyWords=${encodeURIComponent(keyword)}`;
     try {
-      const html = await fetchText(url);
+      const html = await fetchText(url, {}, remainingTimeout(deadlineAt, fetchTimeoutMs));
       const rows = parseCtbpspRows(html, keyword, source, url);
-      if (rows.length) return enrichRowsWithDetails(rows, source);
+      if (rows.length) return enrichRowsWithDetails(rows, source, detailLimit, deadlineAt, fetchTimeoutMs);
     } catch (error) {
       if (!includeManual) throw error;
     }
@@ -229,6 +244,10 @@ async function fetchText(url, options = {}, timeoutMs = 12000) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function remainingTimeout(deadlineAt, fallbackMs) {
+  return Math.max(750, Math.min(fallbackMs, deadlineAt - Date.now()));
 }
 
 function parseQianlimaRows(html, keyword, source, sourceUrl) {
@@ -285,12 +304,17 @@ function parseQianlimaTableRows(html, keyword, source, sourceUrl) {
 function parseCtbpspRows(html, keyword, source, sourceUrl) {
   const text = normalizeText(html);
   const rows = [];
-  const linePattern = /(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})?\s*([^\n]{8,160})/g;
-  let match;
-  while ((match = linePattern.exec(text))) {
-    const [, maybeDate, rawTitle] = match;
-    const title = cleanTitle(rawTitle);
+  const lines = text
+    .split('\n')
+    .map((line) => cleanTenderText(line))
+    .filter((line) => line.length >= 8 && line.length <= 220);
+  for (const line of lines) {
+    if (/keyWords=|keywords=|searchword=|bulletinList|zbpglist/i.test(line)) continue;
+    if (/^(项目名称|采购项目|招标项目|项目编号|采购编号|招标编号)[:：]/.test(line)) continue;
+    const maybeDate = line.match(/20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}/)?.[0] || '';
+    const title = cleanTitle(line.replace(maybeDate, ''));
     if (!isRelevant(title) || title.includes('bulletinList')) continue;
+    const index = text.indexOf(line);
     rows.push(
       toOpportunity({
         title,
@@ -299,9 +323,9 @@ function parseCtbpspRows(html, keyword, source, sourceUrl) {
         keyword,
         type: '招标公告',
         region: '全国',
-        date: normalizeDate(maybeDate) || new Date().toISOString().slice(0, 10),
+        date: normalizeDate(maybeDate) || '',
         url: sourceUrl,
-        snippet: getNearbyText(text, match.index, match[0].length)
+        snippet: getNearbyText(text, index, line.length)
       })
     );
   }
@@ -322,18 +346,19 @@ function parseLooseRows(text, keyword, source, sourceUrl) {
   return dedupe(rows).slice(0, 30);
 }
 
-async function enrichRowsWithDetails(rows, source) {
+async function enrichRowsWithDetails(rows, source, detailLimit = 3, deadlineAt = Date.now() + 12000, fetchTimeoutMs = 5000) {
   const enriched = [];
-  for (const row of rows.slice(0, 20)) {
-    enriched.push(await enrichRowWithDetail(row, source));
+  for (const row of rows.slice(0, detailLimit)) {
+    if (Date.now() >= deadlineAt) break;
+    enriched.push(await enrichRowWithDetail(row, source, deadlineAt, fetchTimeoutMs));
   }
-  return [...enriched, ...rows.slice(20)];
+  return [...enriched, ...rows.slice(enriched.length)];
 }
 
-async function enrichRowWithDetail(row, source) {
+async function enrichRowWithDetail(row, source, deadlineAt, fetchTimeoutMs) {
   if (!row?.url || !isDetailUrl(row.url, source)) return row;
   try {
-    const html = await fetchText(row.url, {}, 10000);
+    const html = await fetchText(row.url, {}, remainingTimeout(deadlineAt, fetchTimeoutMs));
     const detailText = cleanTenderText(decodeHtml(html));
     if (detailText.length < 80) return row;
     return refreshTenderOpportunity(row, detailText);
@@ -354,11 +379,12 @@ function refreshTenderOpportunity(row, detailText) {
     snippet,
     manual: row.manual
   });
+  const publishDate = tender.publishDate || row.date;
   const quality = evaluateOpportunityQuality({
     title: row.title,
     keyword: row.keyword,
     type: row.type,
-    date: row.date,
+    date: publishDate,
     manual: row.manual,
     score: row.score,
     tender
@@ -367,6 +393,8 @@ function refreshTenderOpportunity(row, detailText) {
   const missing = tender.missingFields.length ? `仍缺：${tender.missingFields.join('、')}。` : '关键招标信息已基本齐全。';
   return {
     ...row,
+    date: publishDate,
+    publishDate,
     projectName: tender.projectName,
     procurementUnit: tender.procurementUnit,
     tenderUnit: tender.tenderUnit,
@@ -374,6 +402,7 @@ function refreshTenderOpportunity(row, detailText) {
     agency: tender.agency,
     budget: tender.budget,
     deadline: tender.deadline,
+    deadlineStatus: tender.deadlineStatus,
     contact: tender.contact,
     contactPhone: tender.contactPhone,
     tenderInfo: tender.tenderInfo,
@@ -450,8 +479,9 @@ function manualOpportunity({ source, keyword, today, reason }) {
 
 function toOpportunity({ title, platform, sourceId, keyword, type, region, date, url, detailRef = '', manual = false, manualReason = '', snippet = '' }) {
   const tender = enrichTenderFields({ title, keyword, type, region, date, url, snippet, manual });
+  const publishDate = tender.publishDate || date;
   const score = scoreOpportunity(title, keyword, manual);
-  const quality = evaluateOpportunityQuality({ title, keyword, type, date, manual, score, tender });
+  const quality = evaluateOpportunityQuality({ title, keyword, type, date: publishDate, manual, score, tender });
   const unitLabel = tender.procurementUnit || tender.tenderUnit || tender.buyer || '招标/采购单位待核验';
   const missing = tender.missingFields.length ? `仍缺：${tender.missingFields.join('、')}。` : '关键招标信息已基本齐全。';
   return {
@@ -462,7 +492,8 @@ function toOpportunity({ title, platform, sourceId, keyword, type, region, date,
     sourcePlatform: platform,
     sourceId,
     keyword,
-    date,
+    date: publishDate,
+    publishDate,
     region,
     type,
     url,
@@ -474,6 +505,7 @@ function toOpportunity({ title, platform, sourceId, keyword, type, region, date,
     agency: tender.agency,
     budget: tender.budget,
     deadline: tender.deadline,
+    deadlineStatus: tender.deadlineStatus,
     contact: tender.contact,
     contactPhone: tender.contactPhone,
     tenderInfo: tender.tenderInfo,
@@ -505,7 +537,9 @@ function enrichTenderFields({ title, type, region, date, url, snippet = '', manu
   const agency = inferUnit(combined, ['招标代理', '代理机构', '采购代理机构']);
   const buyer = procurementUnit || tenderUnit || titleUnit;
   const budget = inferBudget(combined);
+  const publishDate = inferPublishDate(combined) || date;
   const deadline = inferDeadline(combined);
+  const deadlineStatus = getDeadlineStatus(deadline);
   const contactInfo = inferContact(combined);
   const projectName = inferProjectName(title, combined);
   const fields = {
@@ -515,7 +549,9 @@ function enrichTenderFields({ title, type, region, date, url, snippet = '', manu
     buyer,
     agency,
     budget,
+    publishDate,
     deadline,
+    deadlineStatus,
     contact: contactInfo.name,
     contactPhone: contactInfo.phone
   };
@@ -533,9 +569,10 @@ function enrichTenderFields({ title, type, region, date, url, snippet = '', manu
       `单位：${fields.procurementUnit || '待核验'}`,
       `类型：${type || '待确认'}`,
       `地区：${region || '待确认'}`,
-      `日期：${date || '待确认'}`,
+      `公告日期：${publishDate || '待确认'}`,
       `预算：${budget || '待核验'}`,
       `截止：${deadline || '待核验'}`,
+      deadlineStatus === 'expired' ? '状态：已过截止/开标时间' : '',
       manual ? '状态：需人工打开来源验证' : ''
     ]
       .filter(Boolean)
@@ -603,14 +640,33 @@ function inferBudget(text = '') {
 
 function inferDeadline(text = '') {
   const patterns = [
-    /(?:投标截止时间|响应文件提交截止时间|报名截止时间|开标时间|截止时间|递交截止时间|获取时间|报名时间)\s*[:：]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)/,
-    /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)(?=.{0,24}(?:截止|开标|报名|递交|获取))/
+    /(?:投标截止时间|响应文件提交截止时间|响应截止时间|报名截止时间|开标时间|截止时间|递交截止时间|递交投标文件截止时间)\s*[:：]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)/,
+    /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:\s*\d{1,2}[:：]\d{2})?)(?=.{0,24}(?:截止|开标|递交|投标|响应))/
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return match[1].replace(/[年月]/g, '-').replace(/日/g, '').replace('：', ':').trim();
+    if (match?.[1]) return normalizeTenderDateTime(match[1]);
   }
   return '';
+}
+
+function inferPublishDate(text = '') {
+  const patterns = [
+    /(?:发布时间|发布日期|公告日期|公告时间|发布公告日期|招标公告日期|采购公告日期|公示日期)\s*[:：]?\s*(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/,
+    /(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)(?=.{0,18}(?:发布|公告发布|发布公告|发布采购|发布招标))/,
+    /(?:发布|公告发布|发布公告|发布采购|发布招标).{0,18}?(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)/
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return normalizeDate(match[1]);
+  }
+
+  const labeledDates = [...String(text).matchAll(/(.{0,16})(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)(.{0,16})/g)];
+  const candidate = labeledDates.find((match) => {
+    const context = `${match[1]}${match[3]}`;
+    return /公告|发布/.test(context) && !/截止|开标|递交|报名|获取|响应|投标/.test(context);
+  });
+  return candidate?.[2] ? normalizeDate(candidate[2]) : '';
 }
 
 function inferContact(text = '') {
@@ -637,9 +693,24 @@ function recommendOwner(title = '') {
 function evaluateOpportunityQuality({ title, keyword, type, date, manual, score, tender = {} }) {
   const text = `${title} ${keyword} ${type}`;
   const days = daysSince(date);
+  const deadlineDays = daysUntilDeadline(tender.deadline);
   const demand = /招标|采购|询价|公告|项目|升级|设备|试制|实验室/.test(text) ? 4 : 2;
   const budget = tender.budget ? 5 : /招标|采购|预算|中标|成交/.test(text) ? 4 : manual ? 2 : 3;
-  const timing = days === null ? (manual ? 2 : 3) : days <= 30 ? 5 : days <= 90 ? 4 : days <= 180 ? 2 : 1;
+  const timing = deadlineDays !== null
+    ? deadlineDays < 0
+      ? 1
+      : deadlineDays <= 7
+        ? 5
+        : deadlineDays <= 30
+          ? 4
+          : 3
+    : days === null
+      ? (manual ? 2 : 3)
+      : days <= 30
+        ? 4
+        : days <= 60
+          ? 3
+          : 1;
   const advantage = /悬浮|真空|熔炼|冷坩埚|难熔|高熵|靶材|材料|合金/.test(text) ? 5 : 3;
   const completenessBoost = Math.round((tender.infoCompleteness || 0) / 12);
   const total = Math.round((demand + budget + timing + advantage) * 5 + score * 0.2 + completenessBoost);
@@ -666,9 +737,14 @@ function daysSince(date) {
 }
 
 function isFreshOpportunity(item) {
-  if (item.manual || !item.date) return true;
+  if (isClosedTender(item)) return false;
+  if (item.deadlineStatus === 'expired') return false;
+  const deadlineDays = daysUntilDeadline(item.deadline);
+  if (deadlineDays !== null && deadlineDays < 0) return false;
+  if (item.manual) return true;
+  if (!item.date) return item.deadlineStatus !== 'unknown';
   const days = daysSince(item.date);
-  return days === null || days <= 90;
+  return days === null || days <= 60;
 }
 
 function scoreOpportunity(title, keyword, manual) {
@@ -678,8 +754,12 @@ function scoreOpportunity(title, keyword, manual) {
     if (title.includes(term)) score += points;
   }
   if (/招标|采购|公告|项目/.test(title)) score += 6;
-  if (/中标|结果|成交/.test(title)) score -= 12;
+  if (closedTenderPattern.test(title)) score -= 30;
   return Math.max(10, Math.min(99, score));
+}
+
+function isClosedTender(item = {}) {
+  return closedTenderPattern.test(`${item.type ?? ''} ${item.title ?? ''} ${item.rawSnippet ?? ''}`);
 }
 
 function isRelevant(title) {
@@ -729,10 +809,40 @@ function decodeHtml(html) {
 
 function normalizeDate(value) {
   if (!value) return '';
-  const match = String(value).match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  const match = String(value).match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
   if (!match) return '';
   const [, year, month, day] = match;
   return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
+function normalizeTenderDateTime(value) {
+  const date = normalizeDate(value);
+  if (!date) return '';
+  const time = String(value).match(/(\d{1,2})[:：](\d{2})/);
+  if (!time) return date;
+  return `${date} ${time[1].padStart(2, '0')}:${time[2]}`;
+}
+
+function parseTenderDate(value) {
+  const date = normalizeDate(value);
+  if (!date) return null;
+  const parsed = Date.parse(`${date}T00:00:00`);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function getDeadlineStatus(deadline) {
+  if (!deadline) return 'unknown';
+  const days = daysUntilDeadline(deadline);
+  if (days === null) return 'unknown';
+  return days < 0 ? 'expired' : 'active';
+}
+
+function daysUntilDeadline(deadline) {
+  const value = parseTenderDate(deadline);
+  if (value === null) return null;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return Math.floor((value - todayStart) / 86400000);
 }
 
 function guessTenderType(text) {

@@ -565,23 +565,8 @@ function EnterpriseApp({ auth, onLogout }) {
         } else {
           recordUsage(id, displayText, reply);
         }
-        if (payload.createdTasks?.length) {
-          setTasks((current) => mergeById(payload.createdTasks, current));
-        }
         if (payload.createdArtifacts) {
           setLastWorkflowArtifacts(payload.createdArtifacts);
-        }
-        if (payload.quotes) {
-          setQuotes(payload.quotes);
-        }
-        if (payload.customers) {
-          setCustomers(payload.customers);
-        }
-        if (payload.generatedOpportunities) {
-          setGeneratedOpportunities(payload.generatedOpportunities);
-        }
-        if (payload.systemAgentOutputs) {
-          setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
         }
       })
       .catch(() => {
@@ -761,6 +746,36 @@ function EnterpriseApp({ auth, onLogout }) {
         if (payload.systemAgentOutputs) setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
       })
       .catch(() => {});
+  };
+
+  const confirmWorkflowArtifacts = (artifacts = lastWorkflowArtifacts) => {
+    if (!workflowArtifactCount(artifacts)) return;
+    setTaskNotice({ status: 'loading', text: '正在确认并写入业务流...' });
+    apiFetch('/api/workflow-artifacts/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ artifacts })
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('workflow_confirm_failed');
+        return response.json();
+      })
+      .then((payload) => {
+        if (payload.tasks) setTasks(payload.tasks);
+        if (payload.customers) setCustomers(payload.customers);
+        if (payload.quotes) setQuotes(payload.quotes);
+        if (payload.generatedOpportunities) setGeneratedOpportunities(payload.generatedOpportunities);
+        if (payload.systemAgentOutputs) setSystemOutputs((current) => ({ ...current, ...payload.systemAgentOutputs }));
+        setLastWorkflowArtifacts(null);
+        setTaskNotice({ status: 'success', text: `已确认 ${workflowArtifactCount(payload.createdArtifacts)} 项业务产物。` });
+      })
+      .catch(() => {
+        setTaskNotice({ status: 'error', text: '确认入库失败，请稍后再试。' });
+      });
+  };
+
+  const dismissWorkflowArtifacts = () => {
+    setLastWorkflowArtifacts(null);
+    setTaskNotice({ status: 'success', text: '已忽略本次业务流建议，对话记录仍然保留。' });
   };
 
   const analyzeSaved = (card) => {
@@ -948,12 +963,14 @@ function EnterpriseApp({ auth, onLogout }) {
 
   const runSystemAgent = (id) => {
     if ((id === 'internal' && !isJamie) || systemRunning[id]) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 35000);
     setSystemRunning((current) => ({ ...current, [id]: true }));
     setSystemRunNotice((current) => ({
       ...current,
       [id]: { status: 'loading', text: `${getSystemAgentDisplayName(id)} 正在运行...` }
     }));
-    apiFetch(`/api/system-agents/${id}/run`, { method: 'POST' })
+    apiFetch(`/api/system-agents/${id}/run`, { method: 'POST', signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error('system_agent_failed');
         return response.json();
@@ -992,10 +1009,19 @@ function EnterpriseApp({ auth, onLogout }) {
       .catch((error) => {
         setSystemRunNotice((current) => ({
           ...current,
-          [id]: { status: 'error', text: `${getSystemAgentDisplayName(id)} 运行失败：${error.message}` }
+          [id]: {
+            status: 'error',
+            text:
+              error.name === 'AbortError'
+                ? `${getSystemAgentDisplayName(id)} 运行超时，请稍后刷新再试。`
+                : `${getSystemAgentDisplayName(id)} 运行失败：${error.message}`
+          }
         }));
       })
-      .finally(() => setSystemRunning((current) => ({ ...current, [id]: false })));
+      .finally(() => {
+        window.clearTimeout(timeout);
+        setSystemRunning((current) => ({ ...current, [id]: false }));
+      });
   };
 
   const submitFeedback = (broadcastId, status) => {
@@ -1074,10 +1100,6 @@ function EnterpriseApp({ auth, onLogout }) {
         if (payload.tasks) setTasks(payload.tasks);
         if (payload.task) {
           setTaskNotice({ status: 'success', text: `已生成任务：${payload.task.title}` });
-          setLastWorkflowArtifacts((current) => ({
-            ...(current ?? {}),
-            tasks: [payload.task, ...((current?.tasks ?? []).filter((item) => item.id !== payload.task.id))]
-          }));
         }
       })
       .catch(() => {
@@ -1263,6 +1285,8 @@ function EnterpriseApp({ auth, onLogout }) {
           submitAgentFeedback={submitAgentFeedback}
           taskNotice={taskNotice}
           lastWorkflowArtifacts={lastWorkflowArtifacts}
+          confirmWorkflowArtifacts={confirmWorkflowArtifacts}
+          dismissWorkflowArtifacts={dismissWorkflowArtifacts}
           agentGrowth={agentGrowthByUser[workspaceId]}
         />
       )}
@@ -1340,10 +1364,15 @@ function EnterpriseApp({ auth, onLogout }) {
           {visiblePage === 'commander' && (
         <JamieCommander
           accessByUser={accessByUser}
+          agentFeedback={agentFeedback}
           modelByUser={modelByUser}
+          customers={customers}
+          lastWorkflowArtifacts={lastWorkflowArtifacts}
           routeByUser={routeByUser}
           routeBySystem={routeBySystem}
+          quotes={quotes}
           setModel={setModel}
+          setPage={setPage}
           setRoute={setRoute}
           setSystemRoute={setSystemRoute}
           applyRecommendedRoutes={applyRecommendedRoutes}
@@ -1352,6 +1381,7 @@ function EnterpriseApp({ auth, onLogout }) {
           rejectRegistration={rejectRegistration}
           suspend={suspend}
           teammates={teammates}
+          tasks={tasks}
           totalUsage={totalUsage}
           transfer={transfer}
           usageByUser={usageByUser}
@@ -1651,6 +1681,7 @@ function CoworkerWorkspace({
   addAttachments,
   attachmentLoading,
   attachments,
+  confirmWorkflowArtifacts,
   coworker,
   discussionTeammates,
   draft,
@@ -1671,6 +1702,7 @@ function CoworkerWorkspace({
   sendMessage,
   clearConversation,
   createTaskFromMessage,
+  dismissWorkflowArtifacts,
   removeAttachment,
   submitFeedback,
   submitAgentFeedback,
@@ -1882,7 +1914,12 @@ function CoworkerWorkspace({
             <button onClick={() => setPage('quote')}>报价</button>
           </div>
         </div>
-        <WorkflowArtifactsDock artifacts={lastWorkflowArtifacts} setPage={setPage} />
+        <WorkflowArtifactsDock
+          artifacts={lastWorkflowArtifacts}
+          onConfirm={confirmWorkflowArtifacts}
+          onDismiss={dismissWorkflowArtifacts}
+          setPage={setPage}
+        />
         <div className="broadcast-inbox">
           <strong>内部广播</strong>
           {broadcasts.length ? (
@@ -1951,7 +1988,7 @@ function CoworkerWorkspace({
   );
 }
 
-function WorkflowArtifactsDock({ artifacts, setPage }) {
+function WorkflowArtifactsDock({ artifacts, onConfirm, onDismiss, setPage }) {
   if (!artifacts) return null;
   const groups = [
     { key: 'tasks', label: '任务', page: 'tasks' },
@@ -1965,8 +2002,8 @@ function WorkflowArtifactsDock({ artifacts, setPage }) {
 
   return (
     <div className="workflow-artifacts-dock">
-      <strong>本次对话已进入业务流</strong>
-      <p>Agent 已把原始信息分流成可跟进的结构化资产。</p>
+      <strong>本次对话生成了业务流建议</strong>
+      <p>Agent 已把原始信息分流成结构化资产，确认后才会写入正式看板。</p>
       <div className="workflow-artifact-grid">
         {groups.map((group) => (
           <button key={group.key} onClick={() => setPage(group.page)}>
@@ -1975,6 +2012,10 @@ function WorkflowArtifactsDock({ artifacts, setPage }) {
             <small>{artifactPreview(group.items[0])}</small>
           </button>
         ))}
+      </div>
+      <div className="workflow-confirm-actions">
+        <button className="confirm" onClick={() => onConfirm?.(artifacts)}>确认入库</button>
+        <button onClick={() => onDismiss?.()}>忽略建议</button>
       </div>
     </div>
   );
@@ -2681,7 +2722,7 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
       <div className="radar-hero">
         <p className="eyebrow">External Opportunity Pool</p>
         <h2>外部线索池 ──► 真实需求 / 预算 / 时间 / 优势评分 ──► 转客户与任务</h2>
-        <span>优先展示近 180 天线索；当前收藏目标：{workspaceName} 的助理</span>
+        <span>优先展示仍在截止期内、可继续行动的线索；当前收藏目标：{workspaceName} 的助理</span>
         <div className="heading-actions radar-actions">
           <PageReturn setPage={setPage} />
           <button className="agent-run-button radar-run" onClick={runExternalAgent} disabled={running}>
@@ -2763,19 +2804,25 @@ function OpportunityBoard({ opportunities, savedIds, saveOpportunity, workspaceN
 
 function JamieCommander({
   accessByUser,
+  agentFeedback,
   agentGrowthByUser,
   applyRecommendedRoutes,
   approveRegistration,
+  customers,
+  lastWorkflowArtifacts,
   modelByUser,
   pendingRegistrations,
   rejectRegistration,
+  quotes,
   routeBySystem,
   routeByUser,
   setModel,
+  setPage,
   setRoute,
   setSystemRoute,
   suspend,
   teammates,
+  tasks,
   totalUsage,
   transfer,
   usageByUser
@@ -2793,6 +2840,14 @@ function JamieCommander({
         <Metric label="总 Token" value={totalUsage.input + totalUsage.output} />
         <Metric label="强模型助理" value={Object.values(modelByUser).filter((id) => id === 'strong').length} />
       </div>
+      <JamieWorkflowConsole
+        agentFeedback={agentFeedback}
+        customers={customers}
+        lastWorkflowArtifacts={lastWorkflowArtifacts}
+        quotes={quotes}
+        setPage={setPage}
+        tasks={tasks}
+      />
       <RegistrationApprovalPanel
         approveRegistration={approveRegistration}
         pendingRegistrations={pendingRegistrations}
@@ -2928,6 +2983,123 @@ function JamieCommander({
   );
 }
 
+function JamieWorkflowConsole({ agentFeedback = [], customers = [], lastWorkflowArtifacts, quotes = [], setPage, tasks = [] }) {
+  const pendingArtifactCount = workflowArtifactCount(lastWorkflowArtifacts);
+  const urgentTasks = tasks
+    .filter((task) => !['done', 'closed', 'cancelled'].includes(task.status))
+    .filter((task) => task.priority === 'high' || /逾期|今天|紧急/.test(`${task.due ?? ''} ${task.next ?? ''}`))
+    .slice(0, 5);
+  const approvalQuotes = quotes
+    .filter((quote) => quote.approval !== '已完成')
+    .filter((quote) => /Jamie|审批|正式|航天|军工|招标|金额/.test(`${quote.approval ?? ''} ${quote.summary ?? ''} ${quote.customer ?? ''}`) || (quote.missing ?? []).length)
+    .slice(0, 5);
+  const stageRisks = customers
+    .filter((customer) => isCustomerStageRisk(customer))
+    .slice(0, 5);
+  const improvementFeedback = agentFeedback
+    .filter((item) => ['inaccurate', 'need_detail'].includes(item.rating))
+    .slice(0, 5);
+  const totalAttention =
+    pendingArtifactCount + urgentTasks.length + approvalQuotes.length + stageRisks.length + improvementFeedback.length;
+
+  const cards = [
+    {
+      key: 'pending',
+      title: '待确认业务流建议',
+      count: pendingArtifactCount,
+      page: 'workspace',
+      empty: '暂无待确认建议。',
+      items: summarizeWorkflowArtifacts(lastWorkflowArtifacts)
+    },
+    {
+      key: 'tasks',
+      title: '逾期和高优任务',
+      count: urgentTasks.length,
+      page: 'tasks',
+      empty: '当前没有高优卡点。',
+      items: urgentTasks.map((task) => ({
+        title: task.title,
+        meta: `${getTeammateName(task.owner)} · ${task.due} · ${priorityLabel(task.priority)}`,
+        text: task.next || task.source
+      }))
+    },
+    {
+      key: 'quotes',
+      title: '待审批报价',
+      count: approvalQuotes.length,
+      page: 'quote',
+      empty: '暂无需要 Jamie 介入的报价。',
+      items: approvalQuotes.map((quote) => ({
+        title: quote.customer,
+        meta: `${quote.type} · ${quote.approval || '内部确认'}`,
+        text: quote.missing?.length ? `缺失：${quote.missing.join('、')}` : quote.priceRange || quote.next
+      }))
+    },
+    {
+      key: 'customers',
+      title: '客户阶段风险',
+      count: stageRisks.length,
+      page: 'crm',
+      empty: '客户阶段暂时没有明显风险。',
+      items: stageRisks.map((customer) => ({
+        title: customer.name,
+        meta: `${normalizeStageLabel(customer.stage)} · ${getTeammateName(customer.owner)}`,
+        text: customer.stageNote || customer.next || '需要确认客户阶段和最近动作。'
+      }))
+    },
+    {
+      key: 'feedback',
+      title: 'Agent 改进信号',
+      count: improvementFeedback.length,
+      page: 'workspace',
+      empty: '暂无“不准 / 需更具体”反馈。',
+      items: improvementFeedback.map((item) => ({
+        title: item.rating === 'inaccurate' ? '回答不准' : '需要更具体',
+        meta: `${item.agentId}_AI · ${new Date(item.at).toLocaleString()}`,
+        text: item.messageText || item.note || '查看对应对话并调整提示词或流程。'
+      }))
+    }
+  ];
+
+  return (
+    <section className="panel jamie-workflow-console">
+      <div className="workflow-console-head">
+        <div>
+          <p className="eyebrow">Workflow Control</p>
+          <h2>今日工作流控制台</h2>
+          <span>{totalAttention ? `${totalAttention} 个事项需要 Jamie 判断或推动` : '今天的工作流很干净，可以继续观察真实使用。'}</span>
+        </div>
+        <button onClick={() => setPage(pendingArtifactCount ? 'workspace' : 'tasks')}>
+          {pendingArtifactCount ? '处理待确认建议' : '查看任务看板'}
+        </button>
+      </div>
+      <div className="workflow-console-grid">
+        {cards.map((card) => (
+          <article className="workflow-console-card" key={card.key}>
+            <button onClick={() => setPage(card.page)}>
+              <span>{card.title}</span>
+              <strong>{card.count}</strong>
+            </button>
+            <div className="workflow-console-list">
+              {card.items.length ? (
+                card.items.map((item, index) => (
+                  <div className="workflow-console-item" key={`${card.key}-${item.title}-${index}`}>
+                    <b>{item.title}</b>
+                    <small>{item.meta}</small>
+                    <p>{item.text}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-hint">{card.empty}</p>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function RegistrationApprovalPanel({ approveRegistration, pendingRegistrations, rejectRegistration }) {
   const [drafts, setDrafts] = useState({});
   const getDraft = (id) =>
@@ -3024,7 +3196,9 @@ function getSystemAgentDisplayName(id) {
 }
 
 function describeSystemRunResult(id, output, createdTasks = [], llm = {}) {
-  const modelStatus = llm?.simulated
+  const modelStatus = llm?.provider === 'crawler'
+    ? '已使用招标爬虫快速结果，未等待模型二次加工'
+    : llm?.simulated
     ? `当前为本地降级模式：${llm.message || 'OPENROUTER_API_KEY 未配置或模型调用失败'}`
     : `已调用真模型：${llm.model || llm.apiModel || llm.provider || 'OpenRouter'}`;
   if (id === 'external') {
@@ -3085,6 +3259,44 @@ function recommendOwnerFromOpportunity(card = {}) {
 
 function artifactPreview(item) {
   return item?.title || item?.name || item?.customer || item?.type || '已生成';
+}
+
+function workflowArtifactCount(artifacts = {}) {
+  return ['tasks', 'customers', 'quotes', 'opportunities', 'knowledge'].reduce(
+    (count, key) => count + (Array.isArray(artifacts?.[key]) ? artifacts[key].length : 0),
+    0
+  );
+}
+
+function summarizeWorkflowArtifacts(artifacts = {}) {
+  return [
+    ['tasks', '任务', 'tasks'],
+    ['customers', '客户', 'crm'],
+    ['quotes', '报价草案', 'quote'],
+    ['opportunities', '商机', 'opportunity'],
+    ['knowledge', '知识沉淀', 'insight']
+  ]
+    .map(([key, label]) => {
+      const items = artifacts?.[key] ?? [];
+      if (!items.length) return null;
+      return {
+        title: label,
+        meta: `${items.length} 项待确认`,
+        text: artifactPreview(items[0])
+      };
+    })
+    .filter(Boolean);
+}
+
+function isCustomerStageRisk(customer = {}) {
+  const stage = normalizeStageLabel(customer.stage);
+  const text = [customer.name, customer.stage, customer.last, customer.next, customer.note, customer.source, customer.stageNote]
+    .filter(Boolean)
+    .join(' ');
+  if (customer.stageNote) return true;
+  if (['已接触', '有意向', '待报价', '待成交'].includes(stage) && /准备|计划|打算|明天|下周|待确认|尚未/.test(text)) return true;
+  if (['有意向', '待报价', '待成交'].includes(stage) && /待确认/.test(`${customer.contact ?? ''} ${customer.phone ?? ''}`)) return true;
+  return false;
 }
 
 function buildLearningDigest({ agentFeedback = [], systemOutputs = {}, tasks = [], quotes = [], customers = [], savedCards = [] }) {

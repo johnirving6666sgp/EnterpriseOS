@@ -36,6 +36,7 @@ const OPENAI_RETRY_COUNT = Number(process.env.OPENAI_RETRY_COUNT || OPENROUTER_R
 const ANTHROPIC_TIMEOUT_MS = Number(process.env.ANTHROPIC_TIMEOUT_MS || OPENROUTER_TIMEOUT_MS);
 const ANTHROPIC_RETRY_COUNT = Number(process.env.ANTHROPIC_RETRY_COUNT || OPENROUTER_RETRY_COUNT);
 const WORKFLOW_OWNER_ID = process.env.WORKFLOW_OWNER_ID || 'larry';
+const EXTERNAL_AGENT_USE_LLM = process.env.EXTERNAL_AGENT_USE_LLM === '1';
 const fixedSystemAgentIds = ['external', 'customer', 'task', 'quote', 'internal'];
 const workflowSystemAgentIds = new Set(['task', 'quote', 'customer']);
 const businessRoles = new Set(['sales', 'technical', 'management', 'admin', 'tester']);
@@ -613,49 +614,35 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
   store.conversations[id].push({ at: new Date().toISOString(), from: 'agent', text: agentReply });
   const usage = calculateUsage(messageForContext, agentReply, agent.modelTier);
   store.usage[id] = mergeUsage(store.usage[id], usage);
-  if (createdArtifacts.tasks.length) {
-    store.tasks ??= [];
-    store.tasks.unshift(...createdArtifacts.tasks);
-    recordAudit(store, req.session.userId, 'task.auto_created_from_chat', { agentId: id, taskIds: createdArtifacts.tasks.map((task) => task.id) });
-  }
-  if (createdArtifacts.quotes.length) {
-    store.quotes ??= [];
-    store.quotes.unshift(...createdArtifacts.quotes);
-    store.quotes = store.quotes.slice(0, 40);
-    recordAudit(store, req.session.userId, 'quote.auto_created_from_chat', { agentId: id, quoteIds: createdArtifacts.quotes.map((quote) => quote.id) });
-  }
-  if (createdArtifacts.customers.length) {
-    store.customers ??= [];
-    upsertCustomers(store, createdArtifacts.customers);
-    recordAudit(store, req.session.userId, 'customer.auto_upserted_from_chat', { agentId: id, customers: createdArtifacts.customers.map((customer) => customer.name) });
-  }
-  if (createdArtifacts.opportunities.length) {
-    store.generatedOpportunities ??= [];
-    store.generatedOpportunities.unshift(...createdArtifacts.opportunities);
-    store.generatedOpportunities = store.generatedOpportunities.slice(0, 30);
-    recordAudit(store, req.session.userId, 'opportunity.auto_created_from_chat', { agentId: id, opportunityIds: createdArtifacts.opportunities.map((item) => item.id) });
-  }
-  if (createdArtifacts.knowledge.length) {
-    store.knowledge ??= [];
-    store.knowledge.unshift(...createdArtifacts.knowledge);
-    store.knowledge = store.knowledge.slice(0, 80);
-    store.systemAgentOutputs ??= {};
-    store.systemAgentOutputs.internal ??= [];
-    store.systemAgentOutputs.internal.unshift(...createdArtifacts.knowledge.map(knowledgeToInsight));
-    store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
-    recordAudit(store, req.session.userId, 'knowledge.auto_created_from_chat', { agentId: id, knowledgeIds: createdArtifacts.knowledge.map((item) => item.id) });
-  }
-  recordAudit(store, req.session.userId, 'chat.recorded', { agentId: id, usage, llm });
+  recordAudit(store, req.session.userId, 'chat.recorded', {
+    agentId: id,
+    usage,
+    llm,
+    proposedArtifacts: Object.fromEntries(Object.entries(createdArtifacts).map(([key, items]) => [key, items.length]))
+  });
   await writeStore(store);
   res.json({
     conversation: store.conversations[id],
     usage: store.usage[id],
     reply: agentReply,
     llm,
-    createdTasks: createdArtifacts.tasks,
+    createdArtifacts
+  });
+});
+
+app.post('/api/workflow-artifacts/confirm', requireAuth, async (req, res) => {
+  const store = await readStore();
+  const artifacts = normalizeWorkflowArtifacts(req.body?.artifacts ?? {});
+  const createdArtifacts = persistWorkflowArtifacts(store, artifacts, req.session.userId);
+  recordAudit(store, req.session.userId, 'workflow_artifacts.confirmed', {
+    counts: Object.fromEntries(Object.entries(createdArtifacts).map(([key, items]) => [key, items.length]))
+  });
+  await writeStore(store);
+  res.json({
     createdArtifacts,
-    quotes: store.quotes ?? [],
-    customers: store.customers ?? [],
+    tasks: visibleTasksForSession(store, req.session),
+    customers: visibleCustomersForSession(store, req.session),
+    quotes: visibleQuotesForSession(store, req.session),
     generatedOpportunities: store.generatedOpportunities ?? [],
     systemAgentOutputs: store.systemAgentOutputs ?? {}
   });
@@ -1648,6 +1635,12 @@ function fallbackAgentReply({ agent, user, message }) {
 async function runSystemAgent({ id, store, systemAgent }) {
   const model = normalizeModelForProvider(systemAgent.provider, systemAgent.apiModel);
   const tenderSignals = id === 'external' ? await fetchTenderSignals(store) : [];
+  if (id === 'external' && tenderSignals.length && !EXTERNAL_AGENT_USE_LLM) {
+    return {
+      output: normalizeSystemAgentOutput(id, {}, 'crawler_fast_path', tenderSignals),
+      llm: { provider: 'crawler', model: 'tender-scanner', simulated: false, message: '已使用爬虫快速结果，跳过模型等待。' }
+    };
+  }
   const compactConversations = Object.entries(store.conversations ?? {})
     .map(([ownerId, conversation]) => {
       const latest = conversation
@@ -1850,13 +1843,15 @@ function normalizeSystemAgentOutput(id, data, raw, tenderSignals = []) {
       action: data.action || tender?.action || '收藏后让个人助理继续拆解客户画像、切入口和下一步验证动作。',
       urgency: data.urgency || tender?.urgency || '需要 48 小时内验证线索真实性和联系人。',
       url: data.url || tender?.url || '',
-      date: data.date || tender?.date || '',
+      date: tender?.publishDate || tender?.date || data.publishDate || data.date || '',
+      publishDate: tender?.publishDate || tender?.date || data.publishDate || data.date || '',
       procurementUnit: data.procurementUnit || data.buyer || tender?.procurementUnit || tender?.buyer || '',
       tenderUnit: data.tenderUnit || tender?.tenderUnit || '',
       buyer: data.buyer || tender?.buyer || tender?.procurementUnit || '',
       agency: data.agency || tender?.agency || '',
       budget: data.budget || tender?.budget || '',
       deadline: data.deadline || tender?.deadline || '',
+      deadlineStatus: data.deadlineStatus || tender?.deadlineStatus || '',
       contact: data.contact || tender?.contact || '',
       contactPhone: data.contactPhone || tender?.contactPhone || '',
       projectName: data.projectName || tender?.projectName || tender?.title || '',
@@ -1921,10 +1916,13 @@ async function fetchTenderSignals(store) {
   const result = await scanTenderSources({
     rootDir,
     keywords: tenderKeywords,
-    limit: 18,
-    maxKeywords: 8,
+    limit: 10,
+    maxKeywords: 4,
+    detailLimit: 2,
+    fetchTimeoutMs: 3500,
     includeManual: true,
-    scanState: store.tenderScan
+    scanState: store.tenderScan,
+    timeBudgetMs: 10000
   });
   store.tenderScan = result.scanState;
   return result.opportunities;
@@ -1998,6 +1996,7 @@ function normalizeSavedOpportunity(opportunity, fallbackId) {
     agency: opportunity.agency || '',
     budget: opportunity.budget || '',
     deadline: opportunity.deadline || '',
+    deadlineStatus: opportunity.deadlineStatus || '',
     contact: opportunity.contact || '',
     contactPhone: opportunity.contactPhone || '',
     projectName: opportunity.projectName || opportunity.title || '',
@@ -2007,7 +2006,8 @@ function normalizeSavedOpportunity(opportunity, fallbackId) {
     infoCompleteness: opportunity.infoCompleteness || 0,
     missingFields: opportunity.missingFields || [],
     url: opportunity.url || '',
-    date: opportunity.date || '',
+    date: opportunity.publishDate || opportunity.date || '',
+    publishDate: opportunity.publishDate || opportunity.date || '',
     quality: opportunity.quality || evaluateTextOpportunity(`${opportunity.title || ''} ${opportunity.why || ''} ${opportunity.action || ''}`),
     recommendation: opportunity.recommendation || opportunity.quality?.recommendation || '',
     recommendedOwner: opportunity.recommendedOwner || recommendOpportunityOwner(opportunity)
@@ -2093,6 +2093,102 @@ function materializeOpportunityPipeline(store, { opportunity, ownerId, actorId }
   store.systemAgentOutputs.internal.unshift(knowledgeToInsight(knowledge));
   store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
   createdArtifacts.knowledge.push(knowledge);
+
+  return createdArtifacts;
+}
+
+function normalizeWorkflowArtifacts(artifacts = {}) {
+  return {
+    tasks: Array.isArray(artifacts.tasks) ? artifacts.tasks.slice(0, 12) : [],
+    quotes: Array.isArray(artifacts.quotes) ? artifacts.quotes.slice(0, 6) : [],
+    customers: Array.isArray(artifacts.customers) ? artifacts.customers.slice(0, 8) : [],
+    opportunities: Array.isArray(artifacts.opportunities) ? artifacts.opportunities.slice(0, 8) : [],
+    knowledge: Array.isArray(artifacts.knowledge) ? artifacts.knowledge.slice(0, 8) : []
+  };
+}
+
+function persistWorkflowArtifacts(store, artifacts, actorId) {
+  const createdArtifacts = { tasks: [], quotes: [], customers: [], opportunities: [], knowledge: [] };
+
+  if (artifacts.tasks.length) {
+    store.tasks ??= [];
+    const tasks = artifacts.tasks.map((task) => normalizeTaskInput(task, actorId));
+    store.tasks.unshift(...tasks);
+    store.tasks = dedupeByTitleAndOwner(store.tasks).slice(0, 120);
+    createdArtifacts.tasks.push(...tasks);
+  }
+
+  if (artifacts.quotes.length) {
+    store.quotes ??= [];
+    const quotes = artifacts.quotes.map((quote) => ({
+      id: quote.id || `quote-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      at: quote.at || new Date().toISOString(),
+      owner: quote.owner || WORKFLOW_OWNER_ID,
+      collaborators: Array.isArray(quote.collaborators) ? quote.collaborators : [],
+      customer: String(quote.customer || '待确认客户').slice(0, 120),
+      type: quote.type || '打包方案',
+      summary: truncateText(quote.summary || quote.text || '', 500),
+      components: Array.isArray(quote.components) ? quote.components : [],
+      technicalParams: Array.isArray(quote.technicalParams) ? quote.technicalParams : [],
+      costStructure: Array.isArray(quote.costStructure) ? quote.costStructure : [],
+      basis: Array.isArray(quote.basis) ? quote.basis : [],
+      priceRange: quote.priceRange || '待补齐参数后生成内部区间',
+      negotiableSpace: quote.negotiableSpace || '待确认',
+      confirmQuestions: Array.isArray(quote.confirmQuestions) ? quote.confirmQuestions : [],
+      missing: Array.isArray(quote.missing) ? quote.missing : [],
+      risk: Array.isArray(quote.risk) ? quote.risk : [],
+      next: quote.next || '补齐报价参数并形成内部草案。',
+      approval: quote.approval || '内部确认',
+      relatedCustomerId: quote.relatedCustomerId,
+      relatedOpportunityId: quote.relatedOpportunityId,
+      createdBy: actorId,
+      confirmedAt: new Date().toISOString()
+    }));
+    store.quotes.unshift(...quotes);
+    store.quotes = store.quotes.slice(0, 40);
+    createdArtifacts.quotes.push(...quotes);
+  }
+
+  if (artifacts.customers.length) {
+    store.customers ??= [];
+    const customers = artifacts.customers.map((customer) => normalizeCustomerInsight(customer, actorId));
+    upsertCustomers(store, customers);
+    createdArtifacts.customers.push(...customers);
+  }
+
+  if (artifacts.opportunities.length) {
+    store.generatedOpportunities ??= [];
+    const opportunities = artifacts.opportunities.map((opportunity) => normalizeSavedOpportunity(opportunity, opportunity.id));
+    const existingIds = new Set(store.generatedOpportunities.map((item) => item.id));
+    const fresh = opportunities.filter((opportunity) => !existingIds.has(opportunity.id));
+    store.generatedOpportunities.unshift(...fresh);
+    store.generatedOpportunities = dedupeTenderSignals(store.generatedOpportunities).slice(0, 30);
+    createdArtifacts.opportunities.push(...fresh);
+  }
+
+  if (artifacts.knowledge.length) {
+    store.knowledge ??= [];
+    const knowledge = artifacts.knowledge.map((item) => ({
+      id: item.id || `knowledge-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      type: item.type || '工作经验',
+      title: truncateText(item.title || '工作经验沉淀', 160),
+      text: truncateText(item.text || item.learning || '', 500),
+      source: item.source || '确认入库',
+      owner: item.owner || actorId,
+      agent: item.agent || `${item.owner || actorId}_AI`,
+      createdAt: item.createdAt || new Date().toISOString(),
+      createdBy: actorId,
+      status: 'draft',
+      confirmedAt: new Date().toISOString()
+    }));
+    store.knowledge.unshift(...knowledge);
+    store.knowledge = store.knowledge.slice(0, 80);
+    store.systemAgentOutputs ??= {};
+    store.systemAgentOutputs.internal ??= [];
+    store.systemAgentOutputs.internal.unshift(...knowledge.map(knowledgeToInsight));
+    store.systemAgentOutputs.internal = store.systemAgentOutputs.internal.slice(0, 12);
+    createdArtifacts.knowledge.push(...knowledge);
+  }
 
   return createdArtifacts;
 }

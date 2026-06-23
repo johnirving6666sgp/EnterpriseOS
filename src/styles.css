@@ -1385,6 +1385,28 @@ h2 {
   white-space: nowrap;
 }
 
+.workflow-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflow-confirm-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #cdebdc;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ffffff;
+  font-weight: 900;
+}
+
+.workflow-confirm-actions .confirm {
+  border-color: #1f9f73;
+  color: #ffffff;
+  background: #18845f;
+}
+
 .broadcast-item {
   padding: 10px;
   border-radius: 8px;
@@ -2006,6 +2028,121 @@ select {
   color: #172033;
   background: #ffffff;
   font-weight: 900;
+}
+
+.jamie-workflow-console {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.workflow-console-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workflow-console-head h2 {
+  margin: 2px 0 4px;
+}
+
+.workflow-console-head span {
+  color: #667085;
+  font-size: 14px;
+}
+
+.workflow-console-head button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #172033;
+  font-weight: 900;
+}
+
+.workflow-console-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-console-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dde4ec;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.workflow-console-card > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0;
+  border: 0;
+  text-align: left;
+  background: transparent;
+}
+
+.workflow-console-card > button span {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.workflow-console-card > button strong {
+  display: grid;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  color: #155e52;
+  background: #ecfff4;
+  font-size: 18px;
+}
+
+.workflow-console-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-console-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.workflow-console-item b {
+  overflow: hidden;
+  color: #172033;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-console-item small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.workflow-console-item p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .command-table {
@@ -2686,6 +2823,7 @@ select {
   .expert-row,
   .workflow-agent-panel,
   .workflow-task-grid,
+  .workflow-console-grid,
   .system-agent-grid,
   .agent-boundary-grid,
   .work-prompt-list,
